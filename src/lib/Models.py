@@ -2,10 +2,13 @@ from abc import ABC, abstractmethod
 from typing import Any, List, Optional, Generator, Iterable
 import io
 import base64
+import hashlib
 import json
+import site
 import speech_recognition as sr
 import soundfile as sf
 import numpy as np
+import sys
 import threading
 import traceback
 from time import sleep, time
@@ -488,6 +491,663 @@ class OpenAIResponsesLLMModel(LLMModel):
         except Exception as e:
             raise e
 
+class GeminiCachedLLMModel(LLMModel):
+    """Gemini-native LLM transport with explicit context caching.
+
+    The rest of the app still speaks the OpenAI-compatible LLMModel interface.
+    This class keeps the static foundation (system instruction + tools) in a
+    Gemini cached content object and sends changing status/history/events as
+    normal request contents.
+    """
+
+    CACHE_SCHEMA_VERSION = "gemini-explicit-cache-v1"
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        temperature: float,
+        reasoning_effort: Optional[str] = None,
+        extra_body: Optional[dict] = None,
+        extra_headers: Optional[dict] = None,
+        provider_name: str | None = None,
+        fallback_model: LLMModel | None = None,
+    ):
+        super().__init__(model_name, provider_name=provider_name)
+        self.base_url = base_url
+        self.temperature = temperature
+        self.reasoning_effort = reasoning_effort
+        self.extra_body = extra_body or {}
+        self.extra_headers = extra_headers or {}
+        self.cache_ttl = str(self.extra_body.get("gemini_cache_ttl", "10800s"))
+        self.cache_disabled_reason: str | None = None
+        self.fallback_model = fallback_model or OpenAILLMModel(
+            base_url=base_url,
+            api_key=api_key,
+            model_name=model_name,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+            extra_headers=extra_headers,
+            provider_name=provider_name,
+        )
+        self.client: Any | None = None
+        self.types: Any | None = None
+        self.cache_store: Any | None = None
+
+        try:
+            genai, types = self._import_genai_sdk()
+            from .Database import KeyValueStore
+
+            self.client = genai.Client(api_key=api_key)
+            self.types = types
+            self.cache_store = KeyValueStore("gemini_context_cache")
+        except Exception as e:
+            log("warn", "Gemini native cache unavailable, using OpenAI-compatible fallback:", e)
+
+    def _import_genai_sdk(self) -> tuple[Any, Any]:
+        """Import google-genai without plugin dependency folders shadowing google-auth."""
+        original_path = list(sys.path)
+        try:
+            site_package_paths = [
+                str(path)
+                for path in (*site.getsitepackages(), site.getusersitepackages())
+                if path
+            ]
+        except Exception:
+            site_package_paths = []
+
+        def is_site_package(path: str) -> bool:
+            try:
+                normalized = path.lower()
+                return any(normalized == site_path.lower() for site_path in site_package_paths)
+            except Exception:
+                return False
+
+        try:
+            sys.path[:] = (
+                [path for path in original_path if is_site_package(path)]
+                + [path for path in original_path if not is_site_package(path)]
+            )
+            for module_name in list(sys.modules):
+                if module_name == "google.genai" or module_name.startswith("google.genai."):
+                    sys.modules.pop(module_name, None)
+                elif module_name == "google.auth" or module_name.startswith("google.auth."):
+                    sys.modules.pop(module_name, None)
+
+            from google import genai  # pyright: ignore[reportMissingImports]
+            from google.genai import types  # pyright: ignore[reportMissingImports]
+            import google.auth.transport._http_client  # pyright: ignore[reportMissingImports] # noqa: F401
+
+            return genai, types
+        finally:
+            sys.path[:] = original_path
+
+    def _fallback_generate(
+        self,
+        messages: List[dict],
+        tools: Optional[List[dict]] = None,
+        tool_choice: Optional[Any] = None,
+    ) -> tuple[str | None, List[Any] | None, ModelUsageStats]:
+        return self.fallback_model.generate(messages=messages, tools=tools, tool_choice=tool_choice)
+
+    def _json_hash(self, value: Any) -> str:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def _split_static_system(self, messages: List[dict]) -> tuple[str | None, List[dict]]:
+        if not messages:
+            return None, []
+
+        first = _model_dump_compatible(messages[0])
+        if isinstance(first, dict) and first.get("role") == "system":
+            content = first.get("content")
+            if isinstance(content, str):
+                return content, messages[1:]
+            if content is not None:
+                return self._stringify_content(content), messages[1:]
+
+        return None, messages
+
+    def _stringify_content(self, content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        try:
+            return json.dumps(content, ensure_ascii=False)
+        except TypeError:
+            return str(content)
+
+    def _convert_schema_for_gemini(self, schema: Any) -> Any:
+        schema = _model_dump_compatible(schema)
+        if isinstance(schema, dict):
+            converted: dict[str, Any] = {}
+            for key, value in schema.items():
+                if key in {"default", "example", "examples", "additionalProperties", "additional_properties"}:
+                    continue
+                converted[key] = self._convert_schema_for_gemini(value)
+            return converted
+        if isinstance(schema, list):
+            return [self._convert_schema_for_gemini(item) for item in schema]
+        return schema
+
+    def _convert_tools_for_gemini(self, tools: Optional[List[dict]]) -> list[Any]:
+        if not tools or not self.types:
+            return []
+
+        function_declarations: list[Any] = []
+        for raw_tool in tools:
+            tool = _model_dump_compatible(raw_tool)
+            if not isinstance(tool, dict):
+                continue
+            if tool.get("type") != "function" or not isinstance(tool.get("function"), dict):
+                continue
+
+            function_data = _model_dump_compatible(tool["function"])
+            if not isinstance(function_data, dict):
+                continue
+
+            declaration = {
+                "name": function_data.get("name"),
+                "description": function_data.get("description", ""),
+                "parameters": self._convert_schema_for_gemini(function_data.get("parameters", {"type": "object", "properties": {}})),
+            }
+            declaration = {k: v for k, v in declaration.items() if v is not None}
+            function_declarations.append(declaration)
+
+        if not function_declarations:
+            return []
+
+        return [self.types.Tool(function_declarations=function_declarations)]
+
+    def _make_text_part(self, text: str) -> Any:
+        if self.types:
+            return self.types.Part(text=text)
+        return {"text": text}
+
+    def _decode_thought_signature(self, signature: Any) -> bytes | None:
+        if signature is None:
+            return None
+        if isinstance(signature, bytes):
+            return signature
+        if isinstance(signature, str) and signature:
+            try:
+                return base64.b64decode(signature)
+            except Exception:
+                return signature.encode("utf-8")
+        return None
+
+    def _encode_thought_signature(self, signature: Any) -> str | None:
+        if signature is None:
+            return None
+        if isinstance(signature, bytes):
+            return base64.b64encode(signature).decode("ascii")
+        if isinstance(signature, str) and signature:
+            return signature
+        return None
+
+    def _make_function_call_part(self, name: str, args: dict[str, Any], thought_signature: Any = None) -> Any:
+        if self.types:
+            return self.types.Part(
+                function_call=self.types.FunctionCall(name=name, args=args),
+                thought_signature=self._decode_thought_signature(thought_signature),
+            )
+        part = {"function_call": {"name": name, "args": args}}
+        if thought_signature:
+            part["thought_signature"] = thought_signature
+        return part
+
+    def _make_function_response_part(self, name: str, response: dict[str, Any]) -> Any:
+        if self.types:
+            return self.types.Part(function_response=self.types.FunctionResponse(name=name, response=response))
+        return {"function_response": {"name": name, "response": response}}
+
+    def _make_content(self, role: str, parts: list[Any]) -> Any:
+        gemini_role = "model" if role == "assistant" else "user"
+        if self.types:
+            return self.types.Content(role=gemini_role, parts=parts)
+        return {"role": gemini_role, "parts": parts}
+
+    def _convert_content_parts(self, content: Any) -> list[Any]:
+        if content is None:
+            return []
+        if isinstance(content, str):
+            return [self._make_text_part(content)] if content else []
+        if isinstance(content, list):
+            parts: list[Any] = []
+            for item in content:
+                item = _model_dump_compatible(item)
+                if isinstance(item, dict):
+                    item_type = item.get("type")
+                    if item_type in {"text", "input_text"}:
+                        text = str(item.get("text", ""))
+                        if text:
+                            parts.append(self._make_text_part(text))
+                        continue
+                    if item_type in {"image_url", "input_image"}:
+                        # Multimodal Gemini-native conversion can be added later.
+                        parts.append(self._make_text_part(self._stringify_content(item)))
+                        continue
+                parts.append(self._make_text_part(self._stringify_content(item)))
+            return parts
+        return [self._make_text_part(self._stringify_content(content))]
+
+    def _convert_messages_for_gemini(self, messages: List[dict]) -> list[Any]:
+        contents: list[Any] = []
+
+        for raw_message in messages:
+            message = _model_dump_compatible(raw_message)
+            if not isinstance(message, dict):
+                continue
+
+            role = message.get("role")
+            if role == "system":
+                # Any non-leading system message is treated as user-visible context.
+                parts = self._convert_content_parts(message.get("content"))
+                if parts:
+                    contents.append(self._make_content("user", parts))
+                continue
+
+            if role == "tool":
+                name = str(message.get("name") or "tool_result")
+                response = {
+                    "content": self._stringify_content(message.get("content", "")),
+                }
+                contents.append(self._make_content("user", [self._make_function_response_part(name, response)]))
+                continue
+
+            if role not in {"user", "assistant"}:
+                continue
+
+            parts = self._convert_content_parts(message.get("content"))
+            if role == "assistant":
+                for raw_tool_call in message.get("tool_calls") or []:
+                    tool_call = _model_dump_compatible(raw_tool_call)
+                    if not isinstance(tool_call, dict):
+                        continue
+                    function_data = _model_dump_compatible(tool_call.get("function"))
+                    if not isinstance(function_data, dict):
+                        continue
+                    name = str(function_data.get("name", ""))
+                    try:
+                        args = json.loads(function_data.get("arguments") or "{}")
+                    except Exception:
+                        args = {}
+                    if name:
+                        thought_signature = (
+                            tool_call.get("extra_content", {})
+                            .get("google", {})
+                            .get("thought_signature")
+                        )
+                        parts.append(self._make_function_call_part(
+                            name,
+                            args if isinstance(args, dict) else {},
+                            thought_signature=thought_signature,
+                        ))
+
+            if parts:
+                contents.append(self._make_content(role, parts))
+
+        return contents
+
+    def _build_cache_key(self, system_instruction: str | None, tools: list[Any]) -> tuple[str, dict[str, Any]]:
+        tool_payload: list[Any] = []
+        for tool in tools:
+            if hasattr(tool, "to_json_dict"):
+                tool_payload.append(tool.to_json_dict())
+            elif hasattr(tool, "model_dump"):
+                tool_payload.append(tool.model_dump())
+            else:
+                tool_payload.append(_model_dump_compatible(tool))
+
+        static_payload = {
+            "schema": self.CACHE_SCHEMA_VERSION,
+            "model": self.model_name,
+            "system_instruction": system_instruction or "",
+            "tools": tool_payload,
+        }
+        return self._json_hash(static_payload), static_payload
+
+    def _cache_ttl_seconds(self) -> int:
+        ttl = self.cache_ttl.strip().lower()
+        try:
+            if ttl.endswith("s"):
+                return int(float(ttl[:-1]))
+            if ttl.endswith("m"):
+                return int(float(ttl[:-1]) * 60)
+            if ttl.endswith("h"):
+                return int(float(ttl[:-1]) * 3600)
+            return int(float(ttl))
+        except Exception:
+            return 10800
+
+    def _cache_refresh_threshold_seconds(self) -> int:
+        return min(3600, max(300, self._cache_ttl_seconds() // 3))
+
+    def _supports_explicit_cache(self) -> bool:
+        model_name = self.model_name.lower()
+        if self.cache_disabled_reason:
+            return False
+        return "gemini" in model_name
+
+    def _cache_expire_timestamp(self, cache: Any) -> float | None:
+        expire_time = getattr(cache, "expire_time", None)
+        if expire_time is None:
+            return None
+        try:
+            return float(expire_time.timestamp())
+        except Exception:
+            return None
+
+    def _update_cache_store_entry(self, store_key: str, cached: dict[str, Any], expires_at: float) -> None:
+        if not self.cache_store:
+            return
+        updated = {
+            **cached,
+            "model": self.model_name,
+            "ttl": self.cache_ttl,
+            "expires_at": expires_at,
+        }
+        self.cache_store.set(store_key, updated)
+
+    def _refresh_cached_content_ttl(
+        self,
+        store_key: str,
+        cached: dict[str, Any],
+        cache_hash: str,
+    ) -> None:
+        if not self.client or not self.types:
+            return
+        cache_name = str(cached["name"])
+        try:
+            refreshed = self.client.caches.update(
+                name=cache_name,
+                config=self.types.UpdateCachedContentConfig(ttl=self.cache_ttl),
+            )
+        except Exception as e:
+            log("warn", "Gemini explicit context cache TTL refresh failed", {
+                "model": self.model_name,
+                "cache": cache_name,
+                "hash": cache_hash[:16],
+                "error": str(e),
+            })
+            return
+
+        expires_at = self._cache_expire_timestamp(refreshed)
+        if expires_at is None:
+            expires_at = time() + max(60, self._cache_ttl_seconds() - 60)
+        self._update_cache_store_entry(store_key, cached, expires_at)
+        log("debug", "Gemini explicit context cache TTL refreshed", {
+            "model": self.model_name,
+            "cache": cache_name,
+            "hash": cache_hash[:16],
+        })
+
+    def _validated_cached_content_name(
+        self,
+        store_key: str,
+        cached: dict[str, Any],
+        cache_hash: str,
+    ) -> str | None:
+        if not self.client or not self.cache_store:
+            return None
+        cache_name = str(cached["name"])
+        try:
+            remote_cache = self.client.caches.get(name=cache_name)
+        except Exception as e:
+            self.cache_store.delete(store_key)
+            log("info", "Gemini explicit context cache stale, removing local entry", {
+                "model": self.model_name,
+                "cache": cache_name,
+                "hash": cache_hash[:16],
+                "error": str(e),
+            })
+            return None
+
+        expires_at = self._cache_expire_timestamp(remote_cache)
+        if expires_at is not None and expires_at <= time():
+            self.cache_store.delete(store_key)
+            log("info", "Gemini explicit context cache expired, removing local entry", {
+                "model": self.model_name,
+                "cache": cache_name,
+                "hash": cache_hash[:16],
+            })
+            return None
+
+        if expires_at is not None:
+            self._update_cache_store_entry(store_key, cached, expires_at)
+            if expires_at - time() <= self._cache_refresh_threshold_seconds():
+                self._refresh_cached_content_ttl(store_key, cached, cache_hash)
+
+        log("debug", "Gemini explicit context cache hit", {
+            "model": self.model_name,
+            "cache": cache_name,
+            "hash": cache_hash[:16],
+        })
+        return cache_name
+
+    def _get_cached_content_name(self, system_instruction: str | None, tools: list[Any]) -> str | None:
+        if not self.client or not self.types or not self.cache_store:
+            return None
+        if not self._supports_explicit_cache():
+            return None
+        if not system_instruction and not tools:
+            return None
+
+        cache_hash, _ = self._build_cache_key(system_instruction, tools)
+        store_key = f"{self.model_name}:{cache_hash}"
+        cached = self.cache_store.get(store_key)
+        if isinstance(cached, dict) and cached.get("name"):
+            cache_name = self._validated_cached_content_name(store_key, cached, cache_hash)
+            if cache_name:
+                return cache_name
+
+        config_kwargs: dict[str, Any] = {
+            "display_name": f"covas-{cache_hash[:16]}",
+            "ttl": self.cache_ttl,
+        }
+        if system_instruction:
+            config_kwargs["system_instruction"] = system_instruction
+        if tools:
+            config_kwargs["tools"] = tools
+
+        try:
+            cache = self.client.caches.create(
+                model=self.model_name,
+                config=self.types.CreateCachedContentConfig(**config_kwargs),
+            )
+        except Exception as e:
+            self.cache_disabled_reason = str(e)
+            log("warn", "Gemini explicit context cache disabled for model:", self.model_name, e)
+            return None
+
+        cache_name = str(getattr(cache, "name", ""))
+        if cache_name:
+            self.cache_store.set(store_key, {
+                "name": cache_name,
+                "hash": cache_hash,
+                "model": self.model_name,
+                "ttl": self.cache_ttl,
+                "expires_at": time() + max(60, self._cache_ttl_seconds() - 60),
+            })
+            log("info", "Gemini explicit context cache created", {
+                "model": self.model_name,
+                "cache": cache_name,
+                "hash": cache_hash[:16],
+            })
+            return cache_name
+        return None
+
+    def _extract_usage(self, response: Any) -> ModelUsageStats:
+        usage = getattr(response, "usage_metadata", None)
+        stats = ModelUsageStats(provider=self.provider_name, model_name=self.model_name)
+        if not usage:
+            return stats
+
+        stats.input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+        stats.output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+        stats.total_tokens = int(getattr(usage, "total_token_count", 0) or 0)
+        stats.cached_tokens = int(getattr(usage, "cached_content_token_count", 0) or 0)
+
+        thoughts = getattr(usage, "thoughts_token_count", None)
+        if thoughts is not None:
+            stats.reasoning_tokens = int(thoughts)
+        return stats
+
+    def _extract_tool_calls(self, response: Any) -> list[ChatCompletionMessageFunctionToolCall] | None:
+        raw_function_calls: list[tuple[Any, str | None]] = []
+        for candidate in getattr(response, "candidates", []) or []:
+            content = getattr(candidate, "content", None)
+            for part in getattr(content, "parts", []) or []:
+                function_call = getattr(part, "function_call", None)
+                if function_call:
+                    raw_function_calls.append((
+                        function_call,
+                        self._encode_thought_signature(getattr(part, "thought_signature", None)),
+                    ))
+
+        if not raw_function_calls:
+            raw_function_calls = [
+                (function_call, None)
+                for function_call in list(getattr(response, "function_calls", None) or [])
+            ]
+
+        tool_calls: list[ChatCompletionMessageFunctionToolCall] = []
+        for function_call, thought_signature in raw_function_calls:
+            name = str(getattr(function_call, "name", "") or "")
+            args = getattr(function_call, "args", {}) or {}
+            if hasattr(args, "to_json_dict"):
+                args = args.to_json_dict()
+            elif hasattr(args, "model_dump"):
+                args = args.model_dump()
+            if not isinstance(args, dict):
+                args = {}
+            if not name:
+                continue
+
+            tool_calls.append(ChatCompletionMessageFunctionToolCall.model_validate({
+                "type": "function",
+                "id": str(getattr(function_call, "id", None) or f"call_{uuid4().hex}"),
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(args, ensure_ascii=False),
+                },
+                "extra_content": {
+                    "google": {
+                        "thought_signature": thought_signature,
+                    },
+                } if thought_signature else {},
+            }))
+
+        return tool_calls or None
+
+    def _convert_tool_choice_for_gemini(self, tool_choice: Any) -> Any | None:
+        if tool_choice is None:
+            return None
+
+        mode = None
+        allowed_function_names = None
+
+        if isinstance(tool_choice, str):
+            choice = tool_choice.lower()
+            if choice == "auto":
+                mode = self.types.FunctionCallingConfigMode.AUTO
+            elif choice == "none":
+                mode = self.types.FunctionCallingConfigMode.NONE
+            elif choice == "required":
+                mode = self.types.FunctionCallingConfigMode.ANY
+            else:
+                raise ValueError(f"Unsupported Gemini tool_choice: {tool_choice}")
+        elif isinstance(tool_choice, dict):
+            function_name = (
+                tool_choice.get("function", {}).get("name")
+                if isinstance(tool_choice.get("function"), dict)
+                else None
+            )
+            if tool_choice.get("type") == "function" and function_name:
+                mode = self.types.FunctionCallingConfigMode.ANY
+                allowed_function_names = [str(function_name)]
+            else:
+                raise ValueError(f"Unsupported Gemini tool_choice: {tool_choice}")
+        else:
+            raise ValueError(f"Unsupported Gemini tool_choice: {tool_choice}")
+
+        function_config_kwargs: dict[str, Any] = {"mode": mode}
+        if allowed_function_names:
+            function_config_kwargs["allowed_function_names"] = allowed_function_names
+
+        return self.types.ToolConfig(
+            function_calling_config=self.types.FunctionCallingConfig(**function_config_kwargs)
+        )
+
+    def generate(
+        self,
+        messages: List[dict],
+        tools: Optional[List[dict]] = None,
+        tool_choice: Optional[Any] = None,
+    ) -> tuple[str | None, List[Any] | None, ModelUsageStats]:
+        if not self.client or not self.types:
+            return self._fallback_generate(messages, tools, tool_choice)
+
+        try:
+            system_instruction, dynamic_messages = self._split_static_system(messages)
+            gemini_tools = self._convert_tools_for_gemini(tools)
+            tool_config = None
+            if tool_choice is not None:
+                tool_choice_value = tool_choice.lower() if isinstance(tool_choice, str) else None
+                if gemini_tools or tool_choice_value != "auto":
+                    tool_config = self._convert_tool_choice_for_gemini(tool_choice)
+            can_use_cache_with_tool_choice = (
+                tool_choice is None
+                or (isinstance(tool_choice, str) and tool_choice.lower() == "auto")
+            )
+            cached_content = (
+                self._get_cached_content_name(system_instruction, gemini_tools)
+                if can_use_cache_with_tool_choice
+                else None
+            )
+            contents = self._convert_messages_for_gemini(dynamic_messages)
+
+            config_kwargs: dict[str, Any] = {
+                "temperature": self.temperature,
+                "automatic_function_calling": self.types.AutomaticFunctionCallingConfig(disable=True),
+            }
+            if tool_config and not cached_content:
+                config_kwargs["tool_config"] = tool_config
+            if cached_content:
+                config_kwargs["cached_content"] = cached_content
+            else:
+                if system_instruction:
+                    config_kwargs["system_instruction"] = system_instruction
+                if gemini_tools:
+                    config_kwargs["tools"] = gemini_tools
+
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents or "",
+                config=self.types.GenerateContentConfig(**config_kwargs),
+            )
+        except Exception as e:
+            log("warn", "Gemini native generation failed, using OpenAI-compatible fallback:", e, traceback.format_exc())
+            return self._fallback_generate(messages, tools, tool_choice)
+
+        usage_metadata = self._extract_usage(response)
+        response_actions = self._extract_tool_calls(response)
+        response_text = None if response_actions else (getattr(response, "text", None) or None)
+
+        if response_text is None and response_actions is None:
+            return (None, None, usage_metadata)
+
+        return (response_text, response_actions, usage_metadata)
+
+    def list_models(self) -> List[str]:
+        if not self.client:
+            return self.fallback_model.list_models() if hasattr(self.fallback_model, "list_models") else []
+        models = self.client.models.list()
+        return [str(getattr(model, "name", getattr(model, "id", ""))) for model in models]
+
 class OpenAIEmbeddingModel(EmbeddingModel):
     def __init__(self, base_url: str, api_key: str, model_name: str, extra_headers: Optional[dict] = None, extra_body: Optional[dict] = None):
         super().__init__(model_name)
@@ -774,6 +1434,18 @@ def create_llm_model(provider: str, config: dict, prefix: str = "llm") -> LLMMod
 
     if provider == "openai":
         return OpenAIResponsesLLMModel(
+            base_url=base_url,
+            api_key=api_key,
+            model_name=model_name,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+            extra_headers=extra_headers,
+            provider_name=provider,
+        )
+
+    if provider == "google-ai-studio" and ("gemini" in model_name.lower() or "google" in base_url.lower()):
+        return GeminiCachedLLMModel(
             base_url=base_url,
             api_key=api_key,
             model_name=model_name,
