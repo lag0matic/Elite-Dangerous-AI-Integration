@@ -831,6 +831,42 @@ class GeminiCachedLLMModel(LLMModel):
         model_name = self.model_name.lower()
         return "gemini" in model_name
 
+    def _gemini_thinking_config(self) -> Any | None:
+        if not self.types:
+            return None
+
+        effort = (self.reasoning_effort or "").strip().lower()
+        if effort in {"", "default"}:
+            return None
+
+        model_name = self.model_name.lower()
+        is_gemini_3 = "gemini-3" in model_name
+        is_flash = "flash" in model_name
+
+        if is_gemini_3:
+            if effort in {"disabled", "none", "minimal"}:
+                level = "minimal" if is_flash else "low"
+            elif effort == "medium":
+                level = "medium" if is_flash else "low"
+            elif effort in {"low", "medium", "high"}:
+                level = effort
+            else:
+                return None
+            return self.types.ThinkingConfig(thinking_level=level)
+
+        budget_by_effort = {
+            "disabled": 0,
+            "none": 0,
+            "minimal": 0,
+            "low": 1024,
+            "medium": 4096,
+            "high": -1,
+        }
+        budget = budget_by_effort.get(effort)
+        if budget is None:
+            return None
+        return self.types.ThinkingConfig(thinking_budget=budget)
+
     def _cache_expire_timestamp(self, cache: Any) -> float | None:
         expire_time = getattr(cache, "expire_time", None)
         if expire_time is None:
@@ -1117,6 +1153,9 @@ class GeminiCachedLLMModel(LLMModel):
                 "temperature": self.temperature,
                 "automatic_function_calling": self.types.AutomaticFunctionCallingConfig(disable=True),
             }
+            thinking_config = self._gemini_thinking_config()
+            if thinking_config:
+                config_kwargs["thinking_config"] = thinking_config
             if tool_config and not cached_content:
                 config_kwargs["tool_config"] = tool_config
             if cached_content:

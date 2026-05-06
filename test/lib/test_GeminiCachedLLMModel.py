@@ -19,6 +19,7 @@ def make_model() -> GeminiCachedLLMModel:
     model.cache_ttl = "10800s"
     model.cache_disabled_reason = None
     model.cache_disabled_keys = set()
+    model.reasoning_effort = None
     return model
 
 
@@ -206,6 +207,39 @@ def test_default_cache_ttl_is_three_hours():
     model = make_model()
 
     assert model._cache_ttl_seconds() == 10800
+
+
+def test_gemini_3_flash_none_reasoning_uses_minimal_thinking():
+    model = make_model()
+    model.model_name = "gemini-3-flash-preview"
+    model.reasoning_effort = "none"
+
+    thinking_config = model._gemini_thinking_config()
+
+    assert thinking_config is not None
+    assert thinking_config.to_json_dict()["thinking_level"] == "MINIMAL"
+
+
+def test_gemini_3_agent_low_reasoning_uses_low_thinking():
+    model = make_model()
+    model.model_name = "gemini-3-flash-preview"
+    model.reasoning_effort = "low"
+
+    thinking_config = model._gemini_thinking_config()
+
+    assert thinking_config is not None
+    assert thinking_config.to_json_dict()["thinking_level"] == "LOW"
+
+
+def test_gemini_2_5_none_reasoning_disables_thinking_budget():
+    model = make_model()
+    model.model_name = "gemini-2.5-flash"
+    model.reasoning_effort = "none"
+
+    thinking_config = model._gemini_thinking_config()
+
+    assert thinking_config is not None
+    assert thinking_config.to_json_dict()["thinking_budget"] == 0
 
 
 def test_validated_cached_content_reuses_remote_live_cache():
