@@ -522,6 +522,7 @@ class GeminiCachedLLMModel(LLMModel):
         self.extra_headers = extra_headers or {}
         self.cache_ttl = str(self.extra_body.get("gemini_cache_ttl", "10800s"))
         self.cache_disabled_reason: str | None = None
+        self.cache_disabled_keys: set[str] = set()
         self.fallback_model = fallback_model or OpenAILLMModel(
             base_url=base_url,
             api_key=api_key,
@@ -828,8 +829,6 @@ class GeminiCachedLLMModel(LLMModel):
 
     def _supports_explicit_cache(self) -> bool:
         model_name = self.model_name.lower()
-        if self.cache_disabled_reason:
-            return False
         return "gemini" in model_name
 
     def _cache_expire_timestamp(self, cache: Any) -> float | None:
@@ -938,6 +937,9 @@ class GeminiCachedLLMModel(LLMModel):
 
         cache_hash, _ = self._build_cache_key(system_instruction, tools)
         store_key = f"{self.model_name}:{cache_hash}"
+        if store_key in self.cache_disabled_keys:
+            return None
+
         cached = self.cache_store.get(store_key)
         if isinstance(cached, dict) and cached.get("name"):
             cache_name = self._validated_cached_content_name(store_key, cached, cache_hash)
@@ -960,6 +962,7 @@ class GeminiCachedLLMModel(LLMModel):
             )
         except Exception as e:
             self.cache_disabled_reason = str(e)
+            self.cache_disabled_keys.add(store_key)
             log("warn", "Gemini explicit context cache disabled for model:", self.model_name, e)
             return None
 

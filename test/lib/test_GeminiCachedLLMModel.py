@@ -18,6 +18,7 @@ def make_model() -> GeminiCachedLLMModel:
     model.types = types
     model.cache_ttl = "10800s"
     model.cache_disabled_reason = None
+    model.cache_disabled_keys = set()
     return model
 
 
@@ -29,21 +30,32 @@ class FakeCacheStore:
     def set(self, key, value):
         self.values[key] = value
 
+    def get(self, key):
+        return self.values.get(key)
+
     def delete(self, key):
         self.deleted.append(key)
         self.values.pop(key, None)
 
 
 class FakeCaches:
-    def __init__(self, expire_time=None, get_error=None):
+    def __init__(self, expire_time=None, get_error=None, create_error=None):
         self.expire_time = expire_time
         self.get_error = get_error
+        self.create_error = create_error
         self.updated = []
+        self.created = []
 
     def get(self, *, name):
         if self.get_error:
             raise self.get_error
         return SimpleNamespace(name=name, expire_time=self.expire_time)
+
+    def create(self, *, model, config):
+        self.created.append((model, config))
+        if self.create_error:
+            raise self.create_error
+        return SimpleNamespace(name=f"cachedContents/{len(self.created)}")
 
     def update(self, *, name, config):
         self.updated.append((name, config))
@@ -168,6 +180,25 @@ def test_flash_lite_models_are_allowed_to_probe_explicit_cache():
     model = make_model()
     model.model_name = "gemini-2.5-flash-lite"
 
+    assert model._supports_explicit_cache() is True
+
+
+def test_failed_cache_create_only_disables_that_cache_key():
+    model = make_model()
+    model.cache_store = FakeCacheStore()
+    fake_caches = FakeCaches(create_error=RuntimeError("too small"))
+    model.client = FakeClient(fake_caches)
+
+    rejected = model._get_cached_content_name("tiny static block", [])
+    first_disabled_keys = set(model.cache_disabled_keys)
+
+    fake_caches.create_error = None
+    accepted = model._get_cached_content_name("large static block", [])
+
+    assert rejected is None
+    assert accepted == "cachedContents/2"
+    assert len(first_disabled_keys) == 1
+    assert len(model.cache_disabled_keys) == 1
     assert model._supports_explicit_cache() is True
 
 
