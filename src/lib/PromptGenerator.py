@@ -2934,8 +2934,52 @@ class PromptGenerator:
                 quests[quest_id] = quest
         return quests
 
-    def generate_status_message(self, projected_states: ProjectedStates, search_agent_context: bool = False):
+    def _choose_status_detail(self, events: list[Event], pending_events: list[Event]) -> str:
+        """Use full status only when the latest context asks for catalog-style details."""
+        full_context_terms = (
+            "station", "stations", "body", "bodies", "planet", "planets",
+            "faction", "factions", "power", "powers", "system info",
+            "engineer", "engineers", "module", "modules", "loadout",
+            "hardpoint", "hardpoints", "weapon", "weapons", "mission",
+            "missions", "community goal", "community goals", "carrier",
+            "carriers", "fleet carrier", "route", "nav route", "cargo",
+            "inventory", "friends", "friend", "materials", "backpack",
+        )
+
+        last_event = events[-1] if events else None
+        if isinstance(last_event, ConversationEvent) and last_event.kind == "user":
+            text = str(last_event.content or "").lower()
+            if any(term in text for term in full_context_terms):
+                return "full"
+
+        full_context_events = {
+            "CommunityGoal",
+            "EngineerProgress",
+            "FSSAllBodiesFound",
+            "FSSBodySignals",
+            "FSSSignalDiscovered",
+            "Loadout",
+            "Market",
+            "Missions",
+            "NavRoute",
+            "Outfitting",
+            "Shipyard",
+        }
+        for event in pending_events:
+            if isinstance(event, GameEvent):
+                event_type = event.content.get("event")
+            elif isinstance(event, StatusEvent):
+                event_type = event.status.get("event")
+            else:
+                continue
+            if event_type in full_context_events:
+                return "full"
+
+        return "core"
+
+    def generate_status_message(self, projected_states: ProjectedStates, search_agent_context: bool = False, detail: str = "full"):
         status_entries: list[tuple[str, Any]] = []
+        core_detail = detail == "core"
 
         current_status = get_state_dict(projected_states, 'CurrentStatus')
         status_fuel = current_status.get('Fuel')
@@ -2954,7 +2998,7 @@ class PromptGenerator:
                 status_entries.append(("Current wing members: ", wingmembers))
 
             guifocus = current_status.get('GuiFocus', '')
-            if guifocus != "NoFocus":
+            if guifocus and guifocus != "NoFocus":
                 status_entries.append(("Current active window: ", guifocus))
 
         # Get ship and cargo info
@@ -3114,7 +3158,7 @@ class PromptGenerator:
                 elif backpack_summary:
                     status_entries.append(("Suit Backpack Contents", backpack_summary))
 
-        if active_mode == 'Main ship':
+        if active_mode == 'Main ship' and not core_detail:
             # Get the ship loadout information
             loadout_info = get_state_dict(projected_states, 'Loadout')
             if loadout_info:
@@ -3190,7 +3234,7 @@ class PromptGenerator:
         status_entries.append(("Main Ship", ship_display))
 
         # Get location info
-        location_info = get_state_dict(projected_states, 'Location')
+        location_info = dict(get_state_dict(projected_states, 'Location'))
         
         # Process location info
         if location_info:
@@ -3209,7 +3253,7 @@ class PromptGenerator:
                     system_info = self.format_system_info(raw_system_info)
 
                 # Get stations from system database
-                if not search_agent_context:
+                if not search_agent_context and not core_detail:
                     stations_data = self.system_db.get_stations(system_name)
                     if stations_data:
                         stations_info = self.format_stations_data(stations_data)
@@ -3231,18 +3275,21 @@ class PromptGenerator:
             }
 
             status_entries.append(("Location", location_info))
-            status_entries.append(("Local system", system_info))
-            if not search_agent_context:
+            if system_info:
+                status_entries.append(("Local system", system_info))
+            if not search_agent_context and not core_detail:
                 if system_powers:
                     status_entries.append(("Powers in local system", system_powers))
                 if system_factions:
                     status_entries.append(("Factions in local system", self.format_local_factions(system_factions)))
-                status_entries.append(("Stations in local system (in ls to primary star)", stations_info))
-                status_entries.append(("Bodies in local system", bodies_info))
+                if stations_info:
+                    status_entries.append(("Stations in local system (in ls to primary star)", stations_info))
+                if bodies_info:
+                    status_entries.append(("Bodies in local system", bodies_info))
 
         # Community Goal
         community_goal = get_state_dict(projected_states, 'CommunityGoal')
-        if community_goal and 'CurrentGoals' in community_goal:
+        if community_goal and 'CurrentGoals' in community_goal and not core_detail:
             current_goals = community_goal.get('CurrentGoals', [])
             if current_goals:
                 goals_info = {}
@@ -3273,7 +3320,7 @@ class PromptGenerator:
 
         # Nav Route 
         nav_info = get_state_dict(projected_states, 'NavInfo')
-        if nav_info and nav_info.get("NavRoute"):
+        if nav_info and nav_info.get("NavRoute") and not core_detail:
             nav_route = nav_info["NavRoute"]
             
             # Enhance NavRoute with data from system database instead of SystemInfo projection
@@ -3328,7 +3375,7 @@ class PromptGenerator:
 
         fleet_carriers = get_state_dict(projected_states, 'FleetCarriers')
         carriers = fleet_carriers.get('Carriers', {})
-        if carriers:
+        if carriers and not core_detail:
             carrier_entries = []
             for carrier_id in sorted(carriers.keys()):
                 entry = carriers.get(carrier_id, {})
@@ -3444,11 +3491,11 @@ class PromptGenerator:
         # Missions
         missions_info = get_state_dict(projected_states, 'Missions')
         missions_info = {key: value for key, value in missions_info.items() if value is not None}
-        if missions_info and 'Active' in missions_info:
+        if missions_info and 'Active' in missions_info and missions_info.get('Active'):
             status_entries.append(("Active missions", missions_info))
 
         active_quest_entries = self._get_active_quest_entries()
-        if active_quest_entries and len(active_quest_entries) > 0:
+        if active_quest_entries and len(active_quest_entries) > 0 and not core_detail:
             if len(active_quest_entries) == 1:
                 status_entries.append(("Active quest", active_quest_entries[0]))
             else:
@@ -3456,7 +3503,7 @@ class PromptGenerator:
 
         # Add colonisation construction status if available
         colonisation_info = get_state_dict(projected_states, 'ColonisationConstruction')
-        if colonisation_info and colonisation_info.get('StarSystem', 'Unknown') != 'Unknown':
+        if colonisation_info and colonisation_info.get('StarSystem', 'Unknown') != 'Unknown' and not core_detail:
             progress = colonisation_info.get('ConstructionProgress', 0.0)
             complete = colonisation_info.get('ConstructionComplete', False)
             failed = colonisation_info.get('ConstructionFailed', False)
@@ -3488,7 +3535,7 @@ class PromptGenerator:
             status_entries.append(("Colonisation Construction", construction_status))
 
         # Add friends status (always include this entry)
-        if not search_agent_context:
+        if not search_agent_context and not core_detail:
             friends_info = get_state_dict(projected_states, 'Friends')
             online_friends = friends_info.get('Online', [])
 
@@ -3545,7 +3592,7 @@ class PromptGenerator:
         engineer_info = get_state_dict(projected_states, 'EngineerProgress')
 
         # Process engineers that are either Unlocked or Invited
-        if engineer_info and 'Engineers' in engineer_info:
+        if engineer_info and 'Engineers' in engineer_info and not core_detail:
             available_engineers = {}
             for engineer in engineer_info.get('Engineers', []):
                 progress = engineer.get('Progress')
@@ -3674,7 +3721,8 @@ class PromptGenerator:
             if piece:
                 usage_stats.conversation_chars += len(json.dumps(piece))
 
-        status_msg_content = self.generate_status_message(projected_states)
+        status_detail = self._choose_status_detail(events, pending_events)
+        status_msg_content = self.generate_status_message(projected_states, detail=status_detail)
         usage_stats.status_chars = len(status_msg_content)
         conversational_pieces.append(
             {
