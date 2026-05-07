@@ -177,6 +177,46 @@ def test_extract_tool_calls_returns_openai_compatible_tool_call():
     assert json.loads(tool_calls[0].function.arguments) == {}
 
 
+def test_detects_tool_history_without_gemini_thought_signature():
+    model = make_model()
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "type": "function",
+                    "id": "call_1",
+                    "function": {"name": "requestDocking", "arguments": "{}"},
+                    "extra_content": {"google": {"thought_signature": "skip_thought_signature_validator"}},
+                }
+            ],
+        },
+        {"role": "tool", "name": "requestDocking", "content": "Docking request was sent"},
+    ]
+
+    assert model._has_gemini_tool_history_without_thought_signatures(messages) is True
+
+
+def test_accepts_tool_history_with_gemini_thought_signature():
+    model = make_model()
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "type": "function",
+                    "id": "call_1",
+                    "function": {"name": "requestDocking", "arguments": "{}"},
+                    "extra_content": {"google": {"thought_signature": "abc123"}},
+                }
+            ],
+        },
+        {"role": "tool", "name": "requestDocking", "content": "Docking request was sent"},
+    ]
+
+    assert model._has_gemini_tool_history_without_thought_signatures(messages) is False
+
+
 def test_flash_lite_models_are_allowed_to_probe_explicit_cache():
     model = make_model()
     model.model_name = "gemini-2.5-flash-lite"

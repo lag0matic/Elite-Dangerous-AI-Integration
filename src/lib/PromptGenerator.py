@@ -3065,7 +3065,7 @@ class PromptGenerator:
                 formatted_inventory.append(f"{count} X {item_name}{stolen}")
 
             # Add the inventory to the ship display
-            ship_display['CargoContents'] = formatted_inventory
+            ship_display['CurrentCargoContents'] = formatted_inventory
         if active_mode == 'SRV':
             # ToDo: Recalculate CargoCapcity when undocking SRV (scarab = 4t; scorpion = 2t)
             ship_display.pop('CargoCapacity', None)
@@ -3766,6 +3766,8 @@ class PromptGenerator:
                     + "Be specific about amounts and percentages for inquiries as the commander can not see the game events' text description but lives in the universe. " \
                     + "You do not ask questions or initiate conversations. You respond only when addressed and in a single sentence. " \
                     + "Don't repeat the same words and sentences, mix it up. " \
+                    + "Prefer 'we' for shared ship-state phrasing when it does not imply you personally performed a ship action; avoid overusing 'the ship' unless a detached technical tone is needed. " \
+                    + "Treat memories as historical context; current status entries override memories and prior conversation for live values like cargo, location, hull, shields, fuel, and destination. Do not add cargo amounts from memory to current cargo counts. " \
                     + "Your character prompt is: " + self.character_prompt.format(commander_name=self.commander_name)
             
             usage_stats.system_chars = len(system_prompt_content)

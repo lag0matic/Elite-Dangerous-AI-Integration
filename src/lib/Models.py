@@ -793,6 +793,30 @@ class GeminiCachedLLMModel(LLMModel):
 
         return contents
 
+    def _has_gemini_tool_history_without_thought_signatures(self, messages: List[dict]) -> bool:
+        for raw_message in messages:
+            message = _model_dump_compatible(raw_message)
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+
+            for raw_tool_call in message.get("tool_calls") or []:
+                tool_call = _model_dump_compatible(raw_tool_call)
+                if not isinstance(tool_call, dict):
+                    continue
+                function_data = _model_dump_compatible(tool_call.get("function"))
+                if not isinstance(function_data, dict) or not function_data.get("name"):
+                    continue
+
+                thought_signature = (
+                    tool_call.get("extra_content", {})
+                    .get("google", {})
+                    .get("thought_signature")
+                )
+                if not thought_signature or thought_signature == "skip_thought_signature_validator":
+                    return True
+
+        return False
+
     def _build_cache_key(self, system_instruction: str | None, tools: list[Any]) -> tuple[str, dict[str, Any]]:
         tool_payload: list[Any] = []
         for tool in tools:
@@ -1133,6 +1157,9 @@ class GeminiCachedLLMModel(LLMModel):
         try:
             system_instruction, dynamic_messages = self._split_static_system(messages)
             gemini_tools = self._convert_tools_for_gemini(tools)
+            if self._has_gemini_tool_history_without_thought_signatures(dynamic_messages):
+                log("debug", "Gemini native generation skipped because prior tool history has no thought signatures")
+                return self._fallback_generate(messages, tools, tool_choice)
             tool_config = None
             if tool_choice is not None:
                 tool_choice_value = tool_choice.lower() if isinstance(tool_choice, str) else None

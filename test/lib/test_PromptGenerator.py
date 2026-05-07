@@ -118,6 +118,19 @@ def test_core_status_keeps_live_ship_and_location_context():
     assert "Docked: true" in status
 
 
+def test_core_status_labels_cargo_inventory_as_current():
+    states = make_projected_states()
+    states["ShipInfo"]["Cargo"] = 23
+    states["Cargo"]["Inventory"] = [
+        {"Name": "Kamitra Cigars", "Count": 23, "Stolen": 0},
+    ]
+
+    status = make_prompt_generator().generate_status_message(states, detail="core")
+
+    assert "CurrentCargoContents" in status
+    assert "23 X Kamitra Cigars" in status
+
+
 def test_core_status_omits_low_value_catalog_sections():
     status = make_prompt_generator().generate_status_message(make_projected_states(), detail="core")
 
