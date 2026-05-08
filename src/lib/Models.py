@@ -102,13 +102,16 @@ class OpenAILLMModel(LLMModel):
         self.extra_headers = extra_headers or {}
 
     def _reasoning_request_overrides(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        reasoning_effort = (self.reasoning_effort or "").lower()
+        reasoning_effort = (self.reasoning_effort or "").strip().lower()
         if not reasoning_effort or reasoning_effort == "default":
             return {}, {}
 
+        if "together.ai" in self.base_url.lower():
+            if reasoning_effort in {"low", "medium", "high"}:
+                return {"reasoning_effort": reasoning_effort}, {}
+            return {}, {}
+
         if reasoning_effort == "disabled":
-            if "together.ai" in self.base_url.lower():
-                return {}, {"reasoning": {"enabled": False}}
             return {}, {}
 
         return {"reasoning_effort": self.reasoning_effort}, {}
