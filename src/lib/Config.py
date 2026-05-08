@@ -810,11 +810,11 @@ class Config(TypedDict):
     active_character_index: int
     llm_provider: Literal['openai', 'openrouter','google-ai-studio', 'custom', 'local-ai-server']
     llm_model_name: str
-    llm_reasoning_effort: Literal['default', 'none', 'minimal', 'low', 'medium', 'high'] | None
+    llm_reasoning_effort: Literal['default', 'disabled', 'none', 'minimal', 'low', 'medium', 'high'] | None
     llm_temperature: float
     agent_llm_provider: Literal['openai', 'openrouter','google-ai-studio', 'custom', 'local-ai-server']
     agent_llm_model_name: str
-    agent_llm_reasoning_effort: Literal['default', 'none', 'minimal', 'low', 'medium', 'high'] | None
+    agent_llm_reasoning_effort: Literal['default', 'disabled', 'none', 'minimal', 'low', 'medium', 'high'] | None
     agent_llm_endpoint: str
     agent_llm_api_key: str
     agent_llm_temperature: float

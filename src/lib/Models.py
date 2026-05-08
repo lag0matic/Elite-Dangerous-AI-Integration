@@ -101,6 +101,18 @@ class OpenAILLMModel(LLMModel):
         self.extra_body = extra_body or {}
         self.extra_headers = extra_headers or {}
 
+    def _reasoning_request_overrides(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        reasoning_effort = (self.reasoning_effort or "").lower()
+        if not reasoning_effort or reasoning_effort == "default":
+            return {}, {}
+
+        if reasoning_effort == "disabled":
+            if "together.ai" in self.base_url.lower():
+                return {}, {"reasoning": {"enabled": False}}
+            return {}, {}
+
+        return {"reasoning_effort": self.reasoning_effort}, {}
+
     def generate(self, messages: List[dict], tools: Optional[List[dict]] = None, tool_choice: Optional[Any] = None) -> tuple[str | None, List[Any] | None, ModelUsageStats]:
         kwargs = {}
         # Special handling for specific models or providers if needed
@@ -126,11 +138,17 @@ class OpenAILLMModel(LLMModel):
                                         "thought_signature": "skip_thought_signature_validator"
                                     }}
         
+        reasoning_params, reasoning_extra_body = self._reasoning_request_overrides()
+        request_extra_body = {
+            **self.extra_body,
+            **reasoning_extra_body,
+        }
+
         params: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
             "temperature": self.temperature,
-            **self.extra_body,
+            **reasoning_params,
             **kwargs
         }
         if tools:
@@ -138,11 +156,8 @@ class OpenAILLMModel(LLMModel):
             if tool_choice:
                 params["tool_choice"] = tool_choice
         
-        if self.reasoning_effort and self.reasoning_effort not in ["disabled", "default", None, ""]:
-             params["reasoning_effort"] = self.reasoning_effort
-
-        if self.extra_body:
-            params["extra_body"] = self.extra_body
+        if request_extra_body:
+            params["extra_body"] = request_extra_body
             
         if self.extra_headers:
             params["extra_headers"] = self.extra_headers

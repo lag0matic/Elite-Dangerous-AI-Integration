@@ -86,7 +86,7 @@ export interface Config {
         | "custom"
         | "local-ai-server";
     llm_model_name: string;
-    llm_reasoning_effort: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | null;
+    llm_reasoning_effort: 'default' | 'disabled' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | null;
     llm_api_key: string;
     llm_endpoint: string;
     llm_temperature: number;
@@ -97,7 +97,7 @@ export interface Config {
         | "custom"
         | "local-ai-server";
     agent_llm_model_name: string;
-    agent_llm_reasoning_effort: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | null;
+    agent_llm_reasoning_effort: 'default' | 'disabled' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | null;
     agent_llm_api_key: string;
     agent_llm_endpoint: string;
     agent_llm_temperature: number;
