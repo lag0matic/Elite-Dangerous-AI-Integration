@@ -230,6 +230,16 @@ class OpenAILLMModel(LLMModel):
             raise e
 
 class OpenAIResponsesLLMModel(LLMModel):
+    TEMPERATURE_UNSUPPORTED_MODELS = {
+        'gpt-5',
+        'gpt-5-mini',
+        'gpt-5-nano',
+        'gpt-5.4-mini',
+        'gpt-5.4-nano',
+        'gpt-5.4',
+        'gpt-5.1',
+    }
+
     def __init__(self, base_url: str, api_key: str, model_name: str, temperature: float, reasoning_effort: Optional[str] = None, extra_body: Optional[dict] = None, extra_headers: Optional[dict] = None, provider_name: str | None = None):
         super().__init__(model_name, provider_name=provider_name)
         self.client = OpenAI(base_url=base_url, api_key=api_key)
@@ -441,10 +451,12 @@ class OpenAIResponsesLLMModel(LLMModel):
         params: dict[str, Any] = {
             "model": self.model_name,
             "input": self._convert_messages(messages),
-            "temperature": self.temperature,
         }
 
-        if self.model_name in ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4', 'gpt-5.1']:
+        if self.model_name not in self.TEMPERATURE_UNSUPPORTED_MODELS:
+            params["temperature"] = self.temperature
+
+        if self.model_name in self.TEMPERATURE_UNSUPPORTED_MODELS:
             params["text"] = {"verbosity": "low"}
 
         if tools:
