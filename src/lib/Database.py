@@ -248,7 +248,14 @@ class EventStore():
     def commit(self) -> None:
         get_connection().commit()
     
-    def insert_event(self, event: Any, processed_at: float, commit: bool = True) -> None:
+    def insert_event(
+            self,
+            event: Any,
+            processed_at: float,
+            commit: bool = True,
+            memorized_at: float | None = None,
+            responded_at: float | None = None,
+    ) -> None:
         conn = get_connection()
         cursor = conn.cursor()
         event_data = json.dumps(event.__dict__)
@@ -256,7 +263,7 @@ class EventStore():
         _ = cursor.execute(f'''
             INSERT INTO {self.table_name} (class, data, processed_at, memorized_at, responded_at)
             VALUES (?, ?, ?, ?, ?)
-        ''', (event_class, event_data, processed_at, None, None))
+        ''', (event_class, event_data, processed_at, memorized_at, responded_at))
         if commit:
             conn.commit()
 

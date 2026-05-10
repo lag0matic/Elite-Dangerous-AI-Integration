@@ -267,12 +267,23 @@ class EventManager:
                 timestamp = datetime.now(timezone.utc).timestamp()
                 event.processed_at = timestamp
 
-                self.short_term_memory.insert_event(event, event.processed_at, commit=False)
+                is_historic_game_event = isinstance(event, GameEvent) and event.historic
+                if is_historic_game_event:
+                    event.memorized_at = event.processed_at
+                    event.responded_at = event.processed_at
+
+                self.short_term_memory.insert_event(
+                    event,
+                    event.processed_at,
+                    commit=False,
+                    memorized_at=event.memorized_at if is_historic_game_event else None,
+                    responded_at=event.responded_at if is_historic_game_event else None,
+                )
                 projected_events = self.update_projections(event, save_later=True)
 
                 self.pending.append(event)
 
-                if isinstance(event, GameEvent) and event.historic:
+                if is_historic_game_event:
                     #self.processed.append(event)
                     continue
 
