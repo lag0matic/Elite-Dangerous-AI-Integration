@@ -1,4 +1,4 @@
-from src.lib.Event import GameEvent, MemoryEvent
+from src.lib.Event import ConversationEvent, GameEvent, MemoryEvent
 import src.lib.PromptGenerator as prompt_generator_module
 from src.lib.PromptGenerator import PromptGenerator
 
@@ -32,6 +32,15 @@ def _game_event() -> GameEvent:
         content={"event": "FsdCharging", "timestamp": "2026-05-10T00:00:00+00:00"},
         historic=False,
         processed_at=1.0,
+        responded_at=None,
+    )
+
+
+def _named_game_event(event_name: str, timestamp: str, processed_at: float) -> GameEvent:
+    return GameEvent(
+        content={"event": event_name, "timestamp": timestamp},
+        historic=False,
+        processed_at=processed_at,
         responded_at=None,
     )
 
@@ -111,6 +120,55 @@ def test_automatic_telemetry_prompt_uses_core_status_instead_of_full_status():
     assert "# Stations in local system" not in prompt_text
     assert "HIP 103687" in prompt_text
     assert "Supercruise" in prompt_text
+
+
+def test_automatic_telemetry_prompt_ignores_stale_pending_chatter_and_events():
+    old_event = GameEvent(
+        content={
+            "event": "ReceiveText",
+            "timestamp": "2026-05-10T00:00:00+00:00",
+            "From": "Power Security Force",
+            "Channel": "npc",
+            "Message": "All done and you're clear to proceed.",
+        },
+        historic=False,
+        processed_at=1.0,
+        responded_at=None,
+    )
+    stale_assistant = ConversationEvent(
+        kind="assistant",
+        content="Phenix is calling and the carrier scan gave us the all-clear.",
+        timestamp="2026-05-10T00:00:10+00:00",
+        processed_at=2.0,
+        responded_at=None,
+    )
+    fresh_event = _named_game_event(
+        "FsdCharging",
+        "2026-05-10T00:06:00+00:00",
+        3.0,
+    )
+
+    prompt, _usage = _generator().generate_prompt(
+        events=[old_event, stale_assistant, fresh_event],
+        projected_states={
+            "CurrentStatus": {
+                "flags": {"InMainShip": True, "FsdCharging": True},
+                "flags2": {},
+            },
+            "Location": {"StarSystem": "HIP 103687"},
+            "ShipInfo": {"Name": "Banshee", "Type": "smallcombat01_nx"},
+            "InCombat": {"InCombat": False},
+        },
+        pending_events=[old_event, stale_assistant, fresh_event],
+        memories=[],
+        mode="automatic_telemetry",
+    )
+
+    prompt_text = _prompt_text(prompt)
+    assert "FsdCharging" in prompt_text
+    assert "Phenix is calling" not in prompt_text
+    assert "All done and you're clear" not in prompt_text
+    assert "Power Security Force" not in prompt_text
 
 
 def test_user_command_prompt_keeps_full_status_for_now():

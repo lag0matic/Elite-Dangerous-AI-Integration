@@ -57,6 +57,43 @@ DockingTimeoutEvent = dict
 LocationEvent = dict
 NavRouteEvent = dict
 
+
+def _event_reference_time(event: Event) -> datetime:
+    timestamp = event.content.get('timestamp') if isinstance(event, GameEvent) else event.timestamp
+    event_time = datetime.fromisoformat(timestamp)
+    if not event_time.tzinfo:
+        event_time = event_time.astimezone()
+    return event_time
+
+
+def _automatic_telemetry_events(pending_events: list[Event], events: list[Event]) -> list[Event]:
+    telemetry_events = [
+        event
+        for event in pending_events
+        if isinstance(event, (GameEvent, StatusEvent, ProjectedEvent, ExternalEvent, QuestEvent))
+    ]
+    if not telemetry_events:
+        telemetry_events = [
+            event
+            for event in events
+            if isinstance(event, (GameEvent, StatusEvent, ProjectedEvent, ExternalEvent, QuestEvent))
+        ][-1:]
+    if not telemetry_events:
+        return []
+
+    reference_time = _event_reference_time(telemetry_events[-1])
+    fresh_events: list[Event] = []
+    for event in telemetry_events:
+        try:
+            delta_seconds = (reference_time - _event_reference_time(event)).total_seconds()
+        except Exception:
+            fresh_events.append(event)
+            continue
+        if delta_seconds <= 90:
+            fresh_events.append(event)
+
+    return fresh_events or telemetry_events[-1:]
+
 class PromptGenerator:
     previous_prompt_json = ''
     
@@ -3591,13 +3628,11 @@ class PromptGenerator:
         ) -> tuple[list[dict[str, str]], PromptUsageStats]:
         log('debug', 'prompt build mode', mode)
 
-        prompt_events = pending_events if mode == "automatic_telemetry" and pending_events else events
+        prompt_events = _automatic_telemetry_events(pending_events, events) if mode == "automatic_telemetry" else events
 
         # Find the most recent event in the prompt scope.
         last_event = prompt_events[-1]
-        reference_time = datetime.fromisoformat(last_event.content.get('timestamp') if isinstance(last_event, GameEvent) else last_event.timestamp)
-        if not reference_time.tzinfo:
-            reference_time = reference_time.astimezone()
+        reference_time = _event_reference_time(last_event)
 
         # Collect the last 50 conversational pieces
         conversational_pieces: list = list()
@@ -3695,7 +3730,7 @@ class PromptGenerator:
         )
 
         if mode == "automatic_telemetry":
-            category_context = self.context_packs.generate_category_context_message(pending_events, projected_states)
+            category_context = self.context_packs.generate_category_context_message(prompt_events, projected_states)
             if category_context:
                 category_pack_name, category_context_message = category_context
                 log('debug', 'context pack attached', category_pack_name)
