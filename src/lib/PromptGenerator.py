@@ -3591,8 +3591,10 @@ class PromptGenerator:
         ) -> tuple[list[dict[str, str]], PromptUsageStats]:
         log('debug', 'prompt build mode', mode)
 
-        # Fine the most recent event
-        last_event = events[-1]
+        prompt_events = pending_events if mode == "automatic_telemetry" and pending_events else events
+
+        # Find the most recent event in the prompt scope.
+        last_event = prompt_events[-1]
         reference_time = datetime.fromisoformat(last_event.content.get('timestamp') if isinstance(last_event, GameEvent) else last_event.timestamp)
         if not reference_time.tzinfo:
             reference_time = reference_time.astimezone()
@@ -3603,7 +3605,7 @@ class PromptGenerator:
         # Initialize usage stats
         usage_stats = PromptUsageStats()
 
-        for event in events[::-1]:
+        for event in prompt_events[::-1]:
             if len(conversational_pieces) >= 50:
                 break
 

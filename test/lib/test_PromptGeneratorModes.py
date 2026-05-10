@@ -211,6 +211,55 @@ def test_non_mining_automatic_prompt_does_not_include_mining_context():
     assert "# Station context" not in prompt_text
 
 
+def test_automatic_telemetry_prompt_uses_pending_events_not_recent_history():
+    old_event = GameEvent(
+        content={
+            "event": "MarketSell",
+            "timestamp": "2026-05-10T00:00:00+00:00",
+            "Type_Localised": "Platinum",
+            "TotalSale": 1400000,
+        },
+        historic=False,
+        processed_at=1.0,
+        responded_at=2.0,
+    )
+    pending_event = GameEvent(
+        content={
+            "event": "Friends",
+            "timestamp": "2026-05-10T00:01:00+00:00",
+            "Name": "RatherRude",
+            "Status": "Online",
+        },
+        historic=False,
+        processed_at=3.0,
+        responded_at=None,
+    )
+
+    prompt, _usage = _generator().generate_prompt(
+        events=[old_event, pending_event],
+        projected_states={
+            "CurrentStatus": {"flags": {"OnFoot": True}, "flags2": {}},
+            "Location": {"StarSystem": "HIP 103687", "Station": "Elvstrom Terminal"},
+            "ShipInfo": {},
+            "Cargo": {"Inventory": [{"Name": "Platinum", "Count": 256}]},
+            "NavInfo": {},
+            "InCombat": {"InCombat": False},
+            "Friends": {"Online": ["RatherRude"], "Pending": []},
+            "Wing": {"Members": []},
+        },
+        pending_events=[pending_event],
+        memories=[],
+        mode="automatic_telemetry",
+    )
+
+    prompt_text = _prompt_text(prompt)
+    assert "RatherRude" in prompt_text
+    assert "Platinum" not in prompt_text
+    assert "1400000" not in prompt_text
+    assert "# Trading and missions context" not in prompt_text
+    assert "# Social context" in prompt_text
+
+
 def test_automatic_station_prompt_includes_verified_docking_context_and_pad_orientation():
     event = GameEvent(
         content={
