@@ -34,7 +34,7 @@ Working note for the Qwen/Cassia context redesign. Goal: keep Cassia informed wi
   - [x] Trading / Missions
 - [x] Add tests that inspect the prompt shape for representative events.
 - [x] Add debug logging that shows which category pack was attached.
-- [ ] Playtest with Qwen and capture bad cases before adding more rules.
+- [x] Playtest with Qwen and capture bad cases before adding more rules.
 - [x] Extract context pack builders out of `PromptGenerator.py`.
 
 ## Current Implementation Status
@@ -425,23 +425,23 @@ Attach only the pack needed for the likely tool family.
 
 ### Test Cases
 
-- [ ] "Request docking" produces `requestDocking` when available.
-- [ ] "Request duck" still reaches docking tool via LLM interpretation.
-- [ ] "Drop the legs" produces `landingGearToggle`.
+- [x] "Request docking" produces `requestDocking` when available. (manual playtest)
+- [x] "Request duck" still reaches docking tool via LLM interpretation. (manual playtest)
+- [x] "Drop the legs" produces `landingGearToggle`. (manual playtest)
 - [ ] "Kick the tires and light the fires" reaches FSD/jump behavior if context supports it.
-- [ ] "Play Nova by VNV Nation" produces `covasify_play` with track/artist arguments.
-- [ ] Tool failure does not become success text.
-- [ ] Tool success reports only confirmed result.
-- [ ] "How many credits?" does not call a tool.
-- [ ] "Who is online?" does not call a tool and uses current Friends projection.
+- [x] "Play Nova by VNV Nation" produces `covasify_play` with track/artist arguments. (manual playtest via different Spotify song)
+- [x] Tool failure does not become success text. (manual playtest)
+- [x] Tool success reports only confirmed result. (manual playtest)
+- [x] "How many credits?" does not call a tool. (manual playtest)
+- [x] "Who is online?" does not call a tool and uses current Friends projection. (manual playtest)
 
 ## Test Cases
 
-- [ ] Prospector scan prompt includes all asteroid materials and mining pack, but not full system encyclopedia.
-- [ ] Friend online event includes current friend state, but not mining/station/system data.
-- [ ] Supercruise exit includes destination/location context, but not older StartJump text.
-- [ ] Docking granted includes station and pad, but not community goals or local body lists.
-- [ ] "Who is online?" pulls current Friends projection.
-- [ ] "How many ground stations are in this system?" pulls local system/stations pack on demand.
-- [ ] "What did we do last?" pulls memories/logbook entries.
-- [ ] "How many credits?" uses current status balance, not transaction totals or memory.
+- [x] Prospector scan prompt includes all asteroid materials and mining pack, but not full system encyclopedia. (manual playtest)
+- [x] Friend online event includes current friend state, but not mining/station/system data. (manual playtest)
+- [x] Supercruise exit includes destination/location context, but not older StartJump text. (manual playtest)
+- [x] Docking granted includes station and pad, but not community goals or local body lists. (manual playtest)
+- [x] "Who is online?" pulls current Friends projection. (manual playtest)
+- [x] "How many ground stations are in this system?" pulls local system/stations pack on demand. (manual playtest)
+- [x] "What did we do last?" pulls memories/logbook entries. (manual playtest)
+- [x] "How many credits?" uses current status balance, not transaction totals or memory. (manual playtest)
