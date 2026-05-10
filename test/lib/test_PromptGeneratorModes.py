@@ -1,4 +1,4 @@
-from src.lib.Event import ConversationEvent, GameEvent, MemoryEvent
+from src.lib.Event import ConversationEvent, GameEvent, MemoryEvent, StatusEvent
 import src.lib.PromptGenerator as prompt_generator_module
 from src.lib.PromptGenerator import PromptGenerator
 
@@ -612,6 +612,70 @@ def test_automatic_combat_prompt_includes_shield_state_without_unrelated_context
     assert "in_danger: true" in prompt_text
     assert "# Ship context" not in prompt_text
     assert "# Stations in local system" not in prompt_text
+
+
+def test_urgent_combat_event_preempts_ship_context():
+    ship_event = StatusEvent(
+        status={"event": "FsdMassLockEscaped"},
+        processed_at=1.0,
+        responded_at=None,
+    )
+    heat_event = GameEvent(
+        content={
+            "event": "HeatWarning",
+            "timestamp": "2026-05-10T00:00:01+00:00",
+        },
+        historic=False,
+        processed_at=2.0,
+        responded_at=None,
+    )
+    attack_event = GameEvent(
+        content={
+            "event": "UnderAttack",
+            "timestamp": "2026-05-10T00:00:02+00:00",
+        },
+        historic=False,
+        processed_at=3.0,
+        responded_at=None,
+    )
+
+    prompt, _usage = _generator().generate_prompt(
+        events=[ship_event, heat_event, attack_event],
+        projected_states={
+            "CurrentStatus": {
+                "flags": {
+                    "InMainShip": True,
+                    "ShieldsUp": True,
+                    "HardpointsDeployed": True,
+                    "InDanger": True,
+                    "OverHeating": False,
+                    "FsdMassLocked": False,
+                },
+                "flags2": {},
+                "Pips": {"system": 1, "engine": 1, "weapons": 4},
+                "LegalState": "Allied",
+            },
+            "Location": {"StarSystem": "HIP 103687"},
+            "ShipInfo": {"Name": "Banshee", "Type": "smallcombat01_nx"},
+            "Cargo": {},
+            "NavInfo": {"NextJumpTarget": "Unknown", "NavRoute": []},
+            "InCombat": {"InCombat": True},
+            "Loadout": {"HullHealth": 1.0},
+            "Target": {},
+        },
+        pending_events=[ship_event, heat_event, attack_event],
+        memories=[],
+        mode="automatic_telemetry",
+    )
+
+    prompt_text = _prompt_text(prompt)
+    assert "# Combat context" in prompt_text
+    assert "# Ship context" not in prompt_text
+    assert "event: HeatWarning" in prompt_text
+    assert "event: UnderAttack" in prompt_text
+    assert "shields_up: true" in prompt_text
+    assert "overheating: false" in prompt_text
+    assert "Do not invent hostile counts" in prompt_text
 
 
 def test_automatic_exploration_prompt_includes_hge_context_without_system_encyclopedia():

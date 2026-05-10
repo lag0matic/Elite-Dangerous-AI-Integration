@@ -550,6 +550,7 @@ class ContextPackGenerator:
                 "in_danger": flags.get("InDanger"),
                 "being_interdicted": flags.get("BeingInterdicted"),
             },
+            "interpretation_note": "Do not invent hostile counts; only report enemy counts when explicitly listed.",
         }, sort_keys=False)
 
     def _signal_entries(self, signals: object) -> list[dict[str, object]]:
@@ -817,6 +818,9 @@ class ContextPackGenerator:
         }, sort_keys=False)
 
     def generate_category_context_message(self, pending_events: list[Event], projected_states: ProjectedStates) -> ContextPackResult:
+        if self._has_urgent_combat_event(pending_events):
+            message = self.generate_combat_context_message(pending_events, projected_states)
+            return ("Combat", message) if message else None
         if any(event_category(event) == "Mining" for event in pending_events):
             message = self.generate_mining_context_message(pending_events, projected_states)
             return ("Mining", message) if message else None
@@ -839,3 +843,22 @@ class ContextPackGenerator:
             message = self.generate_trading_missions_context_message(pending_events, projected_states)
             return ("Trading / Missions", message) if message else None
         return None
+
+    def _has_urgent_combat_event(self, pending_events: list[Event]) -> bool:
+        urgent_events = {
+            "BeingInterdicted",
+            "CockpitBreached",
+            "Died",
+            "HeatDamage",
+            "HeatWarning",
+            "HullDamage",
+            "Interdicted",
+            "ShieldState",
+            "SystemsShutdown",
+            "UnderAttack",
+        }
+        for event in pending_events:
+            content = self._event_content(event)
+            if content and content.get("event") in urgent_events:
+                return True
+        return False
