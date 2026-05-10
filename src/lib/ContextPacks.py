@@ -9,6 +9,10 @@ import yaml
 ContextPackResult = tuple[str, str] | None
 
 
+def _dict_or_empty(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
 class ContextPackGenerator:
     def __init__(self, pad_map: dict[str, dict[str, object]]):
         self.pad_map = pad_map
@@ -23,15 +27,15 @@ class ContextPackGenerator:
         return f"{clock} o'clock, {depth} (Pad {pad_number}, clock orientation: mail slot entry with green on right)"
 
     def generate_core_status_message(self, projected_states: ProjectedStates) -> str:
-        current_status = get_state_dict(projected_states, "CurrentStatus")
-        location = get_state_dict(projected_states, "Location")
-        ship_info = get_state_dict(projected_states, "ShipInfo")
-        cargo = get_state_dict(projected_states, "Cargo")
-        nav_info = get_state_dict(projected_states, "NavInfo", {"NavRoute": []})
-        in_combat = get_state_dict(projected_states, "InCombat")
+        current_status = _dict_or_empty(get_state_dict(projected_states, "CurrentStatus"))
+        location = _dict_or_empty(get_state_dict(projected_states, "Location"))
+        ship_info = _dict_or_empty(get_state_dict(projected_states, "ShipInfo"))
+        cargo = _dict_or_empty(get_state_dict(projected_states, "Cargo"))
+        nav_info = _dict_or_empty(get_state_dict(projected_states, "NavInfo", {"NavRoute": []}))
+        in_combat = _dict_or_empty(get_state_dict(projected_states, "InCombat"))
 
-        flags = current_status.get("flags", {}) if isinstance(current_status, dict) else {}
-        flags2 = current_status.get("flags2", {}) if isinstance(current_status, dict) else {}
+        flags = _dict_or_empty(current_status.get("flags"))
+        flags2 = _dict_or_empty(current_status.get("flags2"))
 
         mode = "Unknown"
         if flags2.get("OnFoot"):
@@ -195,11 +199,11 @@ class ContextPackGenerator:
         if not mining_events:
             return None
 
-        location = get_state_dict(projected_states, "Location")
-        ship_info = get_state_dict(projected_states, "ShipInfo")
-        cargo = get_state_dict(projected_states, "Cargo")
-        current_status = get_state_dict(projected_states, "CurrentStatus")
-        flags = current_status.get("flags", {}) if isinstance(current_status, dict) else {}
+        location = _dict_or_empty(get_state_dict(projected_states, "Location"))
+        ship_info = _dict_or_empty(get_state_dict(projected_states, "ShipInfo"))
+        cargo = _dict_or_empty(get_state_dict(projected_states, "Cargo"))
+        current_status = _dict_or_empty(get_state_dict(projected_states, "CurrentStatus"))
+        flags = _dict_or_empty(current_status.get("flags"))
 
         event_entries: list[dict[str, object]] = []
         for event in mining_events:
@@ -285,11 +289,11 @@ class ContextPackGenerator:
         if not station_events:
             return None
 
-        location = get_state_dict(projected_states, "Location")
-        current_status = get_state_dict(projected_states, "CurrentStatus")
-        docking_events = get_state_dict(projected_states, "DockingEvents")
-        in_docking_range = get_state_dict(projected_states, "InDockingRange")
-        flags = current_status.get("flags", {}) if isinstance(current_status, dict) else {}
+        location = _dict_or_empty(get_state_dict(projected_states, "Location"))
+        current_status = _dict_or_empty(get_state_dict(projected_states, "CurrentStatus"))
+        docking_events = _dict_or_empty(get_state_dict(projected_states, "DockingEvents"))
+        in_docking_range = _dict_or_empty(get_state_dict(projected_states, "InDockingRange"))
+        flags = _dict_or_empty(current_status.get("flags"))
 
         event_entries: list[dict[str, object]] = []
         for event in station_events:
@@ -349,12 +353,12 @@ class ContextPackGenerator:
         if not ship_events:
             return None
 
-        current_status = get_state_dict(projected_states, "CurrentStatus")
-        location = get_state_dict(projected_states, "Location")
-        ship_info = get_state_dict(projected_states, "ShipInfo")
-        nav_info = get_state_dict(projected_states, "NavInfo", {"NavRoute": []})
-        flags = current_status.get("flags", {}) if isinstance(current_status, dict) else {}
-        flags2 = current_status.get("flags2", {}) if isinstance(current_status, dict) else {}
+        current_status = _dict_or_empty(get_state_dict(projected_states, "CurrentStatus"))
+        location = _dict_or_empty(get_state_dict(projected_states, "Location"))
+        ship_info = _dict_or_empty(get_state_dict(projected_states, "ShipInfo"))
+        nav_info = _dict_or_empty(get_state_dict(projected_states, "NavInfo", {"NavRoute": []}))
+        flags = _dict_or_empty(current_status.get("flags"))
+        flags2 = _dict_or_empty(current_status.get("flags2"))
 
         event_entries = []
         event_names: set[str] = set()
@@ -473,12 +477,12 @@ class ContextPackGenerator:
         if not combat_events:
             return None
 
-        current_status = get_state_dict(projected_states, "CurrentStatus")
-        ship_info = get_state_dict(projected_states, "ShipInfo")
-        loadout = get_state_dict(projected_states, "Loadout")
-        target = get_state_dict(projected_states, "Target")
-        in_combat = get_state_dict(projected_states, "InCombat")
-        flags = current_status.get("flags", {}) if isinstance(current_status, dict) else {}
+        current_status = _dict_or_empty(get_state_dict(projected_states, "CurrentStatus"))
+        ship_info = _dict_or_empty(get_state_dict(projected_states, "ShipInfo"))
+        loadout = _dict_or_empty(get_state_dict(projected_states, "Loadout"))
+        target = _dict_or_empty(get_state_dict(projected_states, "Target"))
+        in_combat = _dict_or_empty(get_state_dict(projected_states, "InCombat"))
+        flags = _dict_or_empty(current_status.get("flags"))
 
         event_entries: list[dict[str, object]] = []
         for event in combat_events:
@@ -570,9 +574,9 @@ class ContextPackGenerator:
         if not exploration_events:
             return None
 
-        location = get_state_dict(projected_states, "Location")
-        nav_info = get_state_dict(projected_states, "NavInfo", {"NavRoute": []})
-        fss_signals = get_state_dict(projected_states, "FSSSignals")
+        location = _dict_or_empty(get_state_dict(projected_states, "Location"))
+        nav_info = _dict_or_empty(get_state_dict(projected_states, "NavInfo", {"NavRoute": []}))
+        fss_signals = _dict_or_empty(get_state_dict(projected_states, "FSSSignals"))
 
         event_entries = []
         for event in exploration_events:
@@ -666,8 +670,8 @@ class ContextPackGenerator:
         if not social_events:
             return None
 
-        friends = get_state_dict(projected_states, "Friends")
-        wing = get_state_dict(projected_states, "Wing")
+        friends = _dict_or_empty(get_state_dict(projected_states, "Friends"))
+        wing = _dict_or_empty(get_state_dict(projected_states, "Wing"))
 
         event_entries = []
         for event in social_events:
@@ -737,10 +741,10 @@ class ContextPackGenerator:
         if not trade_mission_events:
             return None
 
-        current_status = get_state_dict(projected_states, "CurrentStatus")
-        cargo = get_state_dict(projected_states, "Cargo")
-        missions = get_state_dict(projected_states, "Missions")
-        location = get_state_dict(projected_states, "Location")
+        current_status = _dict_or_empty(get_state_dict(projected_states, "CurrentStatus"))
+        cargo = _dict_or_empty(get_state_dict(projected_states, "Cargo"))
+        missions = _dict_or_empty(get_state_dict(projected_states, "Missions"))
+        location = _dict_or_empty(get_state_dict(projected_states, "Location"))
 
         event_entries = []
         matching_missions = []

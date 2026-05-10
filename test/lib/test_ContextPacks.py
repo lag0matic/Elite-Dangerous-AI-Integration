@@ -32,3 +32,17 @@ def test_category_context_message_returns_none_without_matching_pack():
     )
 
     assert generator.generate_category_context_message([event], {}) is None
+
+
+def test_core_status_tolerates_startup_null_flags():
+    generator = ContextPackGenerator({})
+
+    message = generator.generate_core_status_message({
+        "CurrentStatus": {"flags": None, "flags2": None},
+        "Location": {"StarSystem": "HIP 103687"},
+        "ShipInfo": {"Name": "Gashadokuro", "Type": "lakonminer"},
+    })
+
+    assert "# Core status" in message
+    assert "HIP 103687" in message
+    assert "status: None" in message
