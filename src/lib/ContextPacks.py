@@ -357,10 +357,14 @@ class ContextPackGenerator:
         flags2 = current_status.get("flags2", {}) if isinstance(current_status, dict) else {}
 
         event_entries = []
+        event_names: set[str] = set()
         for event in ship_events:
             content = self._event_content(event)
             if content:
-                entry = {"event": content.get("event")}
+                event_name = content.get("event")
+                if isinstance(event_name, str):
+                    event_names.add(event_name)
+                entry = {"event": event_name}
                 entry.update(self._copy_fields(content, (
                     ("StarSystem", "system"),
                     ("SystemAddress", "system_address"),
@@ -397,35 +401,55 @@ class ContextPackGenerator:
         if isinstance(nav_route, list):
             route_summary["jumps_remaining"] = len(nav_route)
 
+        verified_ship_state: dict[str, object] = {
+            "mode": mode,
+            "docked": flags.get("Docked"),
+            "landed": flags.get("Landed"),
+            "supercruise": flags.get("Supercruise"),
+            "fsd_charging": flags.get("FsdCharging"),
+            "fsd_hyperdrive_charging": flags2.get("FsdHyperdriveCharging") if flags2 else None,
+            "fsd_mass_locked": flags.get("FsdMassLocked"),
+            "fsd_cooldown": flags.get("FsdCooldown"),
+            "landing_gear_down": flags.get("LandingGearDown"),
+            "hardpoints_deployed": flags.get("HardpointsDeployed"),
+            "cargo_scoop_deployed": flags.get("CargoScoopDeployed"),
+            "night_vision": flags.get("NightVision"),
+            "silent_running": flags.get("SilentRunning"),
+        }
+
+        fuel_related_events = {
+            "FuelScoop",
+            "FuelScoopStarted",
+            "FuelScoopEnded",
+            "ReservoirReplenished",
+            "RefuelAll",
+            "RefuelPartial",
+            "StartJump",
+            "FSDJump",
+        }
+        heat_related_events = {"HeatWarning", "HeatDamage"}
+        if flags.get("ScoopingFuel") or event_names.intersection(fuel_related_events):
+            verified_ship_state["scooping_fuel"] = flags.get("ScoopingFuel")
+        if flags.get("OverHeating") or event_names.intersection(heat_related_events):
+            verified_ship_state["overheating"] = flags.get("OverHeating")
+        if flags.get("LowFuel") or event_names.intersection(fuel_related_events):
+            verified_ship_state["low_fuel"] = flags.get("LowFuel")
+
+        ship: dict[str, object] = {
+            "name": ship_info.get("Name"),
+            "type": ship_info.get("Type"),
+            "ident": ship_info.get("ShipIdent"),
+            "cargo": current_status.get("Cargo", ship_info.get("Cargo")),
+            "cargo_capacity": ship_info.get("CargoCapacity"),
+        }
+        if flags.get("LowFuel") or event_names.intersection(fuel_related_events):
+            ship["fuel_main"] = ship_info.get("FuelMain")
+            ship["fuel_main_capacity"] = ship_info.get("FuelMainCapacity")
+
         return "# Ship context\n" + yaml.dump({
             "events": event_entries,
-            "verified_ship_state": {
-                "mode": mode,
-                "docked": flags.get("Docked"),
-                "landed": flags.get("Landed"),
-                "supercruise": flags.get("Supercruise"),
-                "fsd_charging": flags.get("FsdCharging"),
-                "fsd_hyperdrive_charging": flags2.get("FsdHyperdriveCharging") if flags2 else None,
-                "fsd_mass_locked": flags.get("FsdMassLocked"),
-                "fsd_cooldown": flags.get("FsdCooldown"),
-                "scooping_fuel": flags.get("ScoopingFuel"),
-                "overheating": flags.get("OverHeating"),
-                "low_fuel": flags.get("LowFuel"),
-                "landing_gear_down": flags.get("LandingGearDown"),
-                "hardpoints_deployed": flags.get("HardpointsDeployed"),
-                "cargo_scoop_deployed": flags.get("CargoScoopDeployed"),
-                "night_vision": flags.get("NightVision"),
-                "silent_running": flags.get("SilentRunning"),
-            },
-            "ship": {
-                "name": ship_info.get("Name"),
-                "type": ship_info.get("Type"),
-                "ident": ship_info.get("ShipIdent"),
-                "fuel_main": ship_info.get("FuelMain"),
-                "fuel_main_capacity": ship_info.get("FuelMainCapacity"),
-                "cargo": current_status.get("Cargo", ship_info.get("Cargo")),
-                "cargo_capacity": ship_info.get("CargoCapacity"),
-            },
+            "verified_ship_state": verified_ship_state,
+            "ship": ship,
             "navigation_context_only": route_summary,
             "interpretation_note": (
                 "Route target and destination are context only. "

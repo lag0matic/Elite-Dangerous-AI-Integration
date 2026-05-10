@@ -450,6 +450,9 @@ def test_automatic_ship_prompt_supercruise_exit_does_not_imply_fsd_charging():
     assert "supercruise: false" in prompt_text
     assert "fsd_charging: false" in prompt_text
     assert "fsd_mass_locked: false" in prompt_text
+    assert "scooping_fuel" not in prompt_text
+    assert "overheating" not in prompt_text
+    assert "fuel_main" not in prompt_text
 
 
 def test_automatic_combat_prompt_includes_target_and_bounty_context():
