@@ -1,9 +1,15 @@
 from src.lib.Event import GameEvent, MemoryEvent
+import src.lib.PromptGenerator as prompt_generator_module
 from src.lib.PromptGenerator import PromptGenerator
 
 
 class DummySystemDatabase:
     pass
+
+
+class DummyQuestDatabase:
+    def get_all(self):
+        return []
 
 
 class MinimalPromptGenerator(PromptGenerator):
@@ -12,6 +18,7 @@ class MinimalPromptGenerator(PromptGenerator):
 
 
 def _generator() -> MinimalPromptGenerator:
+    prompt_generator_module.QuestDatabase = DummyQuestDatabase
     return MinimalPromptGenerator(
         commander_name="Dark",
         character_prompt="Cassia test prompt for {commander_name}.",
