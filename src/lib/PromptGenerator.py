@@ -48,6 +48,8 @@ from .Event import (
     QuestEvent,
 )
 from .Logger import log, observe, PromptUsageStats
+from .PromptContext import PromptBuildMode
+from .ContextPacks import ContextPackGenerator
 
 # Add these new type definitions along with the other existing types
 DockingCancelledEvent = dict
@@ -117,16 +119,11 @@ class PromptGenerator:
             "44": {"clock": 5, "depth": "back"},
             "45": {"clock": 5, "depth": "very back"}
         }
+        self.context_packs = ContextPackGenerator(self.pad_map)
 
     def announce_pad(self, pad_number):
         """Generate a detailed description of the landing pad location."""
-        pad = self.pad_map.get(str(pad_number))
-        if not pad:
-            return f"location unknown (Pad {pad_number})"
-
-        clock = pad['clock']
-        depth = pad['depth']
-        return f"{clock} o'clock, {depth} (Pad {pad_number}, clock orientation: mail slot entry with green on right)"
+        return self.context_packs.announce_pad(pad_number)
 
     def get_event_template(self, event: Union[GameEvent, ProjectedEvent, ExternalEvent, QuestEvent]):
         content: Any = event.content
@@ -3584,7 +3581,16 @@ class PromptGenerator:
 
     # TODO use events as passed from db, not in mem copy, pending (new not yet reated to), short_term (reacted to but not yet part of summary memory), memories (historc summaries of events)
     @observe()
-    def generate_prompt(self, events: list[Event], projected_states: ProjectedStates, pending_events: list[Event], memories: list[MemoryEvent]) -> tuple[list[dict[str, str]], PromptUsageStats]:
+    def generate_prompt(
+            self,
+            events: list[Event],
+            projected_states: ProjectedStates,
+            pending_events: list[Event],
+            memories: list[MemoryEvent],
+            mode: PromptBuildMode = "user_command",
+        ) -> tuple[list[dict[str, str]], PromptUsageStats]:
+        log('debug', 'prompt build mode', mode)
+
         # Fine the most recent event
         last_event = events[-1]
         reference_time = datetime.fromisoformat(last_event.content.get('timestamp') if isinstance(last_event, GameEvent) else last_event.timestamp)
@@ -3674,7 +3680,10 @@ class PromptGenerator:
             if piece:
                 usage_stats.conversation_chars += len(json.dumps(piece))
 
-        status_msg_content = self.generate_status_message(projected_states)
+        if mode == "automatic_telemetry":
+            status_msg_content = self.context_packs.generate_core_status_message(projected_states)
+        else:
+            status_msg_content = self.generate_status_message(projected_states)
         usage_stats.status_chars = len(status_msg_content)
         conversational_pieces.append(
             {
@@ -3682,32 +3691,48 @@ class PromptGenerator:
                 "content": status_msg_content,
             }
         )
-        
-        # Add memories
-        memory_pieces_count = 0
-        for event in memories:
-            if memory_pieces_count > 5:
-                break
-            memory_pieces_count += 1
 
-            if isinstance(event, MemoryEvent):
-                event_time = datetime.fromtimestamp(
-                    cast(float,event.metadata.get('time_until', 0.0)),
-                    tz=timezone.utc
+        if mode == "automatic_telemetry":
+            category_context = self.context_packs.generate_category_context_message(pending_events, projected_states)
+            if category_context:
+                category_pack_name, category_context_message = category_context
+                log('debug', 'context pack attached', category_pack_name)
+                usage_stats.status_chars += len(category_context_message)
+                conversational_pieces.append(
+                    {
+                        "role": "user",
+                        "content": category_context_message,
+                    }
                 )
-                if not event_time.tzinfo:
-                    event_time = event_time.astimezone()
+            else:
+                log('debug', 'context pack attached', 'None')
+        
+        if mode == "user_command":
+            # Add memories
+            memory_pieces_count = 0
+            for event in memories:
+                if memory_pieces_count > 5:
+                    break
+                memory_pieces_count += 1
 
-                # Elite Dangerous time (minute resolution)
-                ed_year = event_time.year + 1286
-                timestamp = f"{ed_year}-{event_time.strftime('%m-%d %H:%M')}"
+                if isinstance(event, MemoryEvent):
+                    event_time = datetime.fromtimestamp(
+                        cast(float,event.metadata.get('time_until', 0.0)),
+                        tz=timezone.utc
+                    )
+                    if not event_time.tzinfo:
+                        event_time = event_time.astimezone()
 
-                memory_content = f"[Ship logbook, {timestamp}] {event.content}"
-                usage_stats.memory_chars += len(memory_content)
-                conversational_pieces.append({
-                    "role": "user",
-                    "content": memory_content,
-                })
+                    # Elite Dangerous time (minute resolution)
+                    ed_year = event_time.year + 1286
+                    timestamp = f"{ed_year}-{event_time.strftime('%m-%d %H:%M')}"
+
+                    memory_content = f"[Ship logbook, {timestamp}] {event.content}"
+                    usage_stats.memory_chars += len(memory_content)
+                    conversational_pieces.append({
+                        "role": "user",
+                        "content": memory_content,
+                    })
 
         try:
             system_prompt_content = "The universe of Elite:Dangerous is your reality. Never mention it or refer to it as a game. " \

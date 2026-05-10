@@ -21,6 +21,7 @@ from .Event import ConversationEvent, Event, GameEvent, StatusEvent, ToolEvent, 
 from .EventManager import EventManager
 from .ActionManager import ActionManager
 from .PromptGenerator import PromptGenerator
+from .PromptContext import prompt_build_mode
 from .TTS import TTS
 from typing import Any,  Callable, final
 import yaml
@@ -834,7 +835,8 @@ class Assistant:
 
             log('debug', 'Starting reply...')
             max_conversation_processed = max([event.processed_at for event in events]+[0.0])
-            prompt, prompt_usage = self.prompt_generator.generate_prompt(events=events, projected_states=projected_states, pending_events=new_events, memories=memories)
+            prompt_mode = prompt_build_mode(new_events)
+            prompt, prompt_usage = self.prompt_generator.generate_prompt(events=events, projected_states=projected_states, pending_events=new_events, memories=memories, mode=prompt_mode)
 
             user_input: list[str] = [event.content for event in new_events if isinstance(event, ConversationEvent) and event.kind == 'user']
             tool_uses: int = len([event for event in new_events if event.kind == 'tool'])
