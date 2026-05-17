@@ -3,6 +3,7 @@ from functools import lru_cache
 from typing import Any, Callable, cast, Dict, Union, List, Optional
 from pathlib import Path
 import random
+import re
 
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
@@ -48,6 +49,17 @@ from .Event import (
     QuestEvent,
 )
 from .Logger import log, observe, PromptUsageStats
+from .FocusProfiles import (
+    DEFAULT_FOCUS_PROFILES,
+    FocusProfileName,
+    compact_combat_status,
+    compact_mining_status,
+    compact_tool_status,
+    compact_travel_status,
+    event_name,
+    resolve_focus_profile,
+    should_include_event,
+)
 
 # Add these new type definitions along with the other existing types
 DockingCancelledEvent = dict
@@ -55,19 +67,55 @@ DockingTimeoutEvent = dict
 LocationEvent = dict
 NavRouteEvent = dict
 
+RAW_JOURNAL_VALUE_MAP = {
+    "$AsteroidMaterialContent_Low;": "low",
+    "$AsteroidMaterialContent_Medium;": "medium",
+    "$AsteroidMaterialContent_High;": "high",
+    "$FIXED_EVENT_CHECKPOINT;": "checkpoint",
+    "$FIXED_EVENT_CONVOY;": "convoy signal",
+    "$FIXED_EVENT_DEBRIS;": "debris field",
+    "$STATION_NoFireZone_entered;": "entered no-fire zone",
+    "$STATION_NoFireZone_exited;": "exited no-fire zone",
+    "$STATION_docking_granted;": "docking granted",
+}
+
+RAW_JOURNAL_FALLBACKS = {
+    "contact": "unknown contact",
+    "message": "unresolved comms message",
+    "signal": "unresolved signal",
+    "material": "unknown material",
+    "ship": "unknown ship",
+    "item": "unknown item",
+}
+
+
+def _humanize_journal_token(value: str) -> str:
+    return value.replace("_", " ").replace("-", " ").strip().title()
+
 class PromptGenerator:
     previous_prompt_json = ''
     
-    def __init__(self, commander_name: str, character_prompt: str, important_game_events: list[str], system_db: SystemDatabase, weapon_types: list[dict] | None = None, disabled_game_events: list[str] | None = None):
+    def __init__(
+        self,
+        commander_name: str,
+        character_prompt: str,
+        important_game_events: list[str],
+        system_db: SystemDatabase,
+        weapon_types: list[dict] | None = None,
+        disabled_game_events: list[str] | None = None,
+        focus_profile_reactions: dict[str, dict[str, str]] | None = None,
+    ):
         self.registered_prompt_event_handlers: list[Callable[[Event], str|None]] = []
         self.registered_status_generators: list[Callable[[ProjectedStates], list[tuple[str, Any]]]] = []
         self.commander_name = commander_name
         self.character_prompt = character_prompt
         self.important_game_events = important_game_events
         self.disabled_game_events = disabled_game_events if disabled_game_events is not None else []
+        self.focus_profile_reactions = focus_profile_reactions if isinstance(focus_profile_reactions, dict) else {}
         self.system_db = system_db
         self.weapon_types: list[dict] = weapon_types if weapon_types is not None else []
         self.quest_db = QuestDatabase()
+        self.active_focus_profile: FocusProfileName = "normal"
 
         # Pad map for station docking positions
         self.pad_map = {
@@ -118,6 +166,79 @@ class PromptGenerator:
             "45": {"clock": 5, "depth": "very back"}
         }
 
+    def set_focus_profile(self, profile_name: str) -> FocusProfileName:
+        normalized = profile_name.strip().lower().replace("_", "-")
+        aliases: dict[str, FocusProfileName] = {
+            "normal": "normal",
+            "normal-awareness": "normal",
+            "normal-context": "normal",
+            "default": "normal",
+            "combat": "combat-focus",
+            "combat-mode": "combat-focus",
+            "combat-focus": "combat-focus",
+            "mining": "mining",
+            "mining-focus": "mining",
+            "travel": "travel-docking-exploration",
+            "docking": "travel-docking-exploration",
+            "exploration": "travel-docking-exploration",
+            "travel-focus": "travel-docking-exploration",
+            "travel-docking": "travel-docking-exploration",
+            "travel-docking-exploration": "travel-docking-exploration",
+            "commerce": "commerce",
+            "market": "commerce",
+            "trade": "commerce",
+            "station": "commerce",
+            "quiet": "quiet",
+            "quiet-mode": "quiet",
+            "full": "full-context",
+            "full-context": "full-context",
+            "full-context-mode": "full-context",
+        }
+        resolved = aliases.get(normalized)
+        if resolved is None or resolved not in DEFAULT_FOCUS_PROFILES:
+            valid = ", ".join(name for name in DEFAULT_FOCUS_PROFILES if name != "tool-result")
+            raise ValueError(f"Unknown focus profile '{profile_name}'. Valid profiles: {valid}")
+        self.active_focus_profile = resolved
+        return resolved
+
+    def get_focus_profile(self) -> FocusProfileName:
+        return self.active_focus_profile
+
+    def get_focus_event_reaction_state(self, event_type: str, profile_name: str | None = None) -> str | None:
+        profile_key = profile_name or self.active_focus_profile
+        profile_reactions = self.focus_profile_reactions.get(profile_key)
+        if not isinstance(profile_reactions, dict):
+            return None
+        state = profile_reactions.get(event_type)
+        return state if state in ("on", "off", "hidden") else None
+
+    def should_include_event_for_focus(
+        self,
+        event: Event,
+        effective_profile,
+        is_pending: bool,
+    ) -> bool:
+        content = None
+        if isinstance(event, (GameEvent, ProjectedEvent, ExternalEvent, QuestEvent)):
+            content = event.content
+        elif isinstance(event, StatusEvent):
+            content = event.status
+
+        if not content:
+            return should_include_event(event, effective_profile, is_pending)
+
+        override_state = self.get_focus_event_reaction_state(
+            str(content.get("event", "")),
+            effective_profile.profile.name,
+        )
+        if override_state == "hidden":
+            return False
+        if override_state in ("on", "off"):
+            if not is_pending and not effective_profile.profile.include_non_pending_events:
+                return False
+            return True
+        return should_include_event(event, effective_profile, is_pending)
+
     def announce_pad(self, pad_number):
         """Generate a detailed description of the landing pad location."""
         pad = self.pad_map.get(str(pad_number))
@@ -127,6 +248,105 @@ class PromptGenerator:
         clock = pad['clock']
         depth = pad['depth']
         return f"{clock} o'clock, {depth} (Pad {pad_number}, clock orientation: mail slot entry with green on right)"
+
+    def clean_journal_value(self, value: Any, fallback: str = "unknown", kind: str = "value") -> str:
+        """Convert Elite journal localization keys into safe prompt text."""
+        if value is None:
+            return RAW_JOURNAL_FALLBACKS.get(kind, fallback)
+
+        if not isinstance(value, str):
+            return str(value)
+
+        text = value.strip()
+        if not text:
+            return RAW_JOURNAL_FALLBACKS.get(kind, fallback)
+
+        if text.lower().startswith("material content:"):
+            return text.split(":", 1)[1].strip().lower()
+
+        if "$" not in text and "#index=" not in text:
+            return text
+
+        if text in RAW_JOURNAL_VALUE_MAP:
+            return RAW_JOURNAL_VALUE_MAP[text]
+
+        hotspot_match = re.fullmatch(r"\$SAA_RingHotspot:#type=\$([^;]+);", text)
+        if hotspot_match:
+            resource = hotspot_match.group(1)
+            if resource.endswith("_name"):
+                resource = resource[:-5]
+            return f"{_humanize_journal_token(resource)} hotspot"
+
+        commodity_match = re.fullmatch(r"\$([^;]+)_name;", text)
+        if commodity_match:
+            return _humanize_journal_token(commodity_match.group(1))
+
+        market_match = re.fullmatch(r"\$MARKET_category_([^;]+);", text)
+        if market_match:
+            return f"{_humanize_journal_token(market_match.group(1))} goods"
+
+        economy_match = re.fullmatch(r"\$economy_([^;]+);", text)
+        if economy_match:
+            return _humanize_journal_token(economy_match.group(1))
+
+        government_match = re.fullmatch(r"\$government_([^;]+);", text)
+        if government_match:
+            return _humanize_journal_token(government_match.group(1))
+
+        security_match = re.fullmatch(r"\$SYSTEM_SECURITY_([^;]+);", text)
+        if security_match:
+            return f"{_humanize_journal_token(security_match.group(1))} security"
+
+        warzone_match = re.fullmatch(r"\$Warzone_([^_:;]+)_([^:;]+)(?::#index=\d+)?;", text)
+        if warzone_match:
+            warzone_type = _humanize_journal_token(warzone_match.group(1))
+            intensity = {"Low": "low", "Med": "medium", "High": "high"}.get(
+                warzone_match.group(2),
+                warzone_match.group(2).lower(),
+            )
+            if warzone_type == "Point Race":
+                return f"{intensity} intensity combat zone"
+            if warzone_type == "Powerplay":
+                return f"{intensity} powerplay warzone"
+            return f"{intensity} {warzone_type.lower()} signal"
+
+        npc_match = re.fullmatch(r"\$npc_name_decorate:#name=([^;]+);", text)
+        if npc_match:
+            return npc_match.group(1)
+
+        ship_match = re.fullmatch(r"\$ShipName_([^;]+);", text)
+        if ship_match:
+            return _humanize_journal_token(ship_match.group(1))
+
+        if re.fullmatch(r"\$MULTIPLAYER_SCENARIO\d+_TITLE;", text):
+            return RAW_JOURNAL_FALLBACKS.get(kind, "unresolved scenario signal")
+
+        if text.startswith("$Trader_") or text.startswith("$Military_") or text.startswith("$DockingChatter_"):
+            return RAW_JOURNAL_FALLBACKS.get(kind, "unresolved comms message")
+
+        return RAW_JOURNAL_FALLBACKS.get(kind, fallback)
+
+    def localized_value(
+        self,
+        content: Dict[str, Any],
+        localized_key: str,
+        raw_key: str,
+        fallback: str = "unknown",
+        kind: str = "value",
+    ) -> str:
+        return self.clean_journal_value(
+            content.get(localized_key) or content.get(raw_key),
+            fallback=fallback,
+            kind=kind,
+        )
+
+    def scrub_journal_text(self, text: str) -> str:
+        """Remove any remaining raw journal localization tokens from prompt text."""
+        return re.sub(
+            r"\$[^\s\"',{}[\]]+?;",
+            lambda match: self.clean_journal_value(match.group(0), fallback="unresolved signal", kind="signal"),
+            text,
+        )
 
     def get_event_template(self, event: Union[GameEvent, ProjectedEvent, ExternalEvent, QuestEvent]):
         content: Any = event.content
@@ -152,7 +372,9 @@ class PromptGenerator:
             if (receive_text_event.get('Channel', '') == 'npc' and receive_text_event.get('From', '') == ''
                 and receive_text_event.get('Message', '').startswith('$COMMS_entered:#name=')):
                 return None
-            return f'Message received from {receive_text_event.get("From_Localised", receive_text_event.get("From"))} on channel {receive_text_event.get("Channel")}: "{receive_text_event.get("Message_Localised", receive_text_event.get("Message"))}"'
+            sender = self.localized_value(receive_text_event, "From_Localised", "From", "unknown contact", "contact")
+            message = self.localized_value(receive_text_event, "Message_Localised", "Message", "unresolved comms message", "message")
+            return f'Message received from {sender} on channel {receive_text_event.get("Channel")}: "{message}"'
         if event_name == 'SendText':
             send_text_event = cast(SendTextEvent, content)
             return f'{self.commander_name} sent a message to {send_text_event.get("To")}: "{send_text_event.get("Message")}"'
@@ -881,27 +1103,27 @@ class PromptGenerator:
             return None
 
         if event_name == 'FleetCarrierDiscovered':
-            return f"{self.commander_name} discovered a fleet carrier signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered a fleet carrier signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'ResourceExtractionDiscovered':
-            return f"{self.commander_name} discovered a resource extraction signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered a resource extraction signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'InstallationDiscovered':
-            return f"{self.commander_name} discovered an installation signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered an installation signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'NavBeaconDiscovered':
-            return f"{self.commander_name} discovered a navigation beacon signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered a navigation beacon signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'TouristBeaconDiscovered':
-            return f"{self.commander_name} discovered a tourist beacon signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered a tourist beacon signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'MegashipDiscovered':
-            return f"{self.commander_name} discovered a megaship signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered a megaship signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'GenericDiscovered':
-            return f"{self.commander_name} discovered a signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered a signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'OutpostDiscovered':
-            return f"{self.commander_name} discovered an outpost signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered an outpost signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'CombatDiscovered':
-            return f"{self.commander_name} discovered a combat signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered a combat signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'StationDiscovered':
-            return f"{self.commander_name} discovered a station signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered a station signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
         if event_name == 'UnknownSignalDiscovered':
-            return f"{self.commander_name} discovered an unknown signal: {content.get('SignalName', 'unknown signal')}."
+            return f"{self.commander_name} discovered an unknown signal: {self.localized_value(content, 'SignalName_Localised', 'SignalName', 'unknown signal', 'signal')}."
             
         if event_name == 'FSSBodySignals':
             fss_body_signals_event = cast(FSSBodySignalsEvent, content)
@@ -915,14 +1137,14 @@ class PromptGenerator:
             
             signals_info = []
             for signal in saa_signals_event.get('Signals', []):
-                sig_type = signal.get('Type_Localised', signal.get('Type', 'Unknown'))
+                sig_type = self.localized_value(signal, 'Type_Localised', 'Type', 'unknown signal', 'signal')
                 count = signal.get('Count', 0)
                 signals_info.append(f"{count} {sig_type}")
             
             if 'Genuses' in saa_signals_event:
                 genus_info = []
                 for genus in saa_signals_event.get('Genuses', []):
-                    genus_name = genus.get('Genus_Localised', genus.get('Genus', 'Unknown species'))
+                    genus_name = self.localized_value(genus, 'Genus_Localised', 'Genus', 'unknown species', 'signal')
                     genus_info.append(genus_name)
                 
                 if genus_info:
@@ -1324,7 +1546,7 @@ class PromptGenerator:
             
         if event_name == 'MiningRefined':
             mining_refined_event = cast(Dict[str, Any], content)
-            material_type = mining_refined_event.get('Type_Localised', mining_refined_event.get('Type', 'unknown material'))
+            material_type = self.localized_value(mining_refined_event, 'Type_Localised', 'Type', 'unknown material', 'material')
             
             return f"{self.commander_name} has refined mining fragments into 1 ton of {material_type}."
 
@@ -1811,21 +2033,26 @@ class PromptGenerator:
 
         if event_name == 'ProspectedAsteroid':
             prospect_event = cast(Dict[str, Any], content)
-            content_level = prospect_event.get('Content', 'Unknown')
+            content_level = self.localized_value(prospect_event, 'Content_Localised', 'Content', 'unknown', 'material')
             remaining = prospect_event.get('Remaining', 100)
 
             materials_info = ""
             if prospect_event.get('Materials'):
                 materials = []
                 for material in prospect_event.get('Materials', []):
-                    name = material.get('Name_Localised', material.get('Name', 'unknown material'))
+                    name = self.localized_value(material, 'Name_Localised', 'Name', 'unknown material', 'material')
                     proportion = material.get('Proportion', 0)
                     materials.append(f"{name} ({proportion:.1f}%)")
                 materials_info = f" Contains: {', '.join(materials)}."
 
             motherlode = ""
             if prospect_event.get('MotherlodeMaterial'):
-                motherlode = f" This is a motherlode asteroid with {prospect_event.get('MotherlodeMaterial')}!"
+                motherlode_material = self.clean_journal_value(
+                    prospect_event.get('MotherlodeMaterial'),
+                    fallback='unknown material',
+                    kind='material',
+                )
+                motherlode = f" This is a motherlode asteroid with {motherlode_material}!"
 
             return f"{self.commander_name} has prospected an asteroid with {content_level} mineral content. {remaining}% remaining.{materials_info}{motherlode}"
 
@@ -1899,7 +2126,7 @@ class PromptGenerator:
             
         if event_name == 'USSDrop':
             uss_event = cast(Dict[str, Any], content)
-            uss_type = uss_event.get('USSType', 'Unknown')
+            uss_type = self.localized_value(uss_event, 'USSType_Localised', 'USSType', 'unknown signal', 'signal')
             threat = uss_event.get('USSThreat', 0)
             
             threat_info = ""
@@ -1985,7 +2212,7 @@ class PromptGenerator:
                 elif threat_level > 0:
                     threat = f" (Threat level: {threat_level})"
             
-            destination = supercruise_destination_drop_event.get('Type_Localised', supercruise_destination_drop_event.get('Type'))
+            destination = self.localized_value(supercruise_destination_drop_event, 'Type_Localised', 'Type', 'unknown destination', 'signal')
             return f"{self.commander_name} is dropping from supercruise at {destination}{threat}"
 
         if event_name == 'SquadronStartup':
@@ -2025,12 +2252,15 @@ class PromptGenerator:
         if event_name == 'ShipTargeted':
             ship_targeted_event = cast(ShipTargetedEvent, content)
             if ship_targeted_event.get('TargetLocked'):
+                pilot_name = self.localized_value(ship_targeted_event, 'PilotName_Localised', 'PilotName', 'unknown pilot', 'contact')
+                ship_name = self.localized_value(ship_targeted_event, 'Ship_Localised', 'Ship', 'ship', 'ship')
                 if ship_targeted_event.get('Subsystem_Localised'):
-                    return f"Weapons now targeting {ship_targeted_event.get('LegalState', '')} pilot {ship_targeted_event.get('PilotName_Localised')}'s {ship_targeted_event.get('Subsystem_Localised')}"
-                if ship_targeted_event.get('PilotName_Localised'):
-                    return f"Weapons now targeting {ship_targeted_event.get('LegalState', '')} pilot {ship_targeted_event.get('PilotName_Localised')}'s {ship_targeted_event.get('Ship','ship').capitalize()}"
+                    subsystem = self.localized_value(ship_targeted_event, 'Subsystem_Localised', 'Subsystem', 'subsystem', 'item')
+                    return f"Weapons now targeting {ship_targeted_event.get('LegalState', '')} pilot {pilot_name}'s {subsystem}"
+                if pilot_name != 'unknown pilot':
+                    return f"Weapons now targeting {ship_targeted_event.get('LegalState', '')} pilot {pilot_name}'s {ship_name}"
                 else:
-                    return f"Weapons now targeting the {ship_targeted_event.get('Ship','ship').capitalize()}"
+                    return f"Weapons now targeting the {ship_name}"
             else:
                 return f"Weapons' target lock lost."
 
@@ -2049,7 +2279,7 @@ class PromptGenerator:
                 for reward in bounty_event.get('Rewards', []):
                     rewards.append(f"{reward.get('Reward'):,} credits from {reward.get('Faction')}")
                 rewards_text = f" ({', '.join(rewards)})"
-            target = bounty_event.get('Target_Localised', bounty_event.get('Target', 'target'))
+            target = self.localized_value(bounty_event, 'Target_Localised', 'Target', 'target', 'contact')
             return f"{self.commander_name} has collected a {bounty_event.get('TotalReward'):,} credit bounty for eliminating {target}{rewards_text}."
 
         if event_name == 'CapShipBond':
@@ -2438,6 +2668,7 @@ class PromptGenerator:
     def event_message(self, event: Union[GameEvent, ProjectedEvent, ExternalEvent, QuestEvent], timeoffset: str, is_important: bool):
         message = self.get_event_template(event)
         if message:
+            message = self.scrub_journal_text(message)
             return {
                 "role": "user",
                 "content": f"[{'IMPORTANT ' if is_important else ''}Game Event, {timeoffset}] {message}",
@@ -2450,6 +2681,7 @@ class PromptGenerator:
     def status_messages(self, event: StatusEvent, timeoffset: str, is_important: bool):
         message = self.get_status_event_template(event)
         if message:
+            message = self.scrub_journal_text(message)
             return {
                 "role": "user",
                 "content": f"[{'IMPORTANT ' if is_important else ''}Game Event, {timeoffset}] {message}",
@@ -2605,7 +2837,7 @@ class PromptGenerator:
                 for signal in signals:
                     if not isinstance(signal, dict):
                         continue
-                    name = signal.get("Type_Localised") or signal.get("Type")
+                    name = self.localized_value(signal, "Type_Localised", "Type", "unknown signal", "signal")
                     if name:
                         signal_names.append(name)
 
@@ -2614,7 +2846,7 @@ class PromptGenerator:
                 for genus in genuses:
                     if not isinstance(genus, dict):
                         continue
-                    name = genus.get("Genus_Localised") or genus.get("Genus")
+                    name = self.localized_value(genus, "Genus_Localised", "Genus", "unknown species", "signal")
                     if not name:
                         continue
                     scanned = genus.get("scanned", False)
@@ -2634,7 +2866,7 @@ class PromptGenerator:
                     for signal in ring_signal_list:
                         if not isinstance(signal, dict):
                             continue
-                        name = signal.get("Type_Localised") or signal.get("Type")
+                        name = self.localized_value(signal, "Type_Localised", "Type", "unknown signal", "signal")
                         if name:
                             ring_signal_names.append(name)
                     if ring_signal_names:
@@ -2961,6 +3193,25 @@ class PromptGenerator:
         ship_info = get_state_dict(projected_states, 'ShipInfo')
         cargo_info = get_state_dict(projected_states, 'Cargo')
         fighters = ship_info.get('Fighters', [])
+
+        if active_mode == 'Main ship' and status_fuel:
+            fuel_main = status_fuel.get('FuelMain')
+            fuel_reservoir = status_fuel.get('FuelReservoir')
+            fuel_main_capacity = ship_info.get('FuelMainCapacity')
+            fuel_reservoir_capacity = ship_info.get('FuelReservoirCapacity')
+            fuel_status = {}
+            if fuel_main is not None:
+                fuel_status["main_tons"] = fuel_main
+                fuel_status["main_units"] = "tons"
+                if fuel_main_capacity:
+                    fuel_status["main_capacity_tons"] = fuel_main_capacity
+                    fuel_status["main_percent"] = round((float(fuel_main) / float(fuel_main_capacity)) * 100, 1)
+            if fuel_reservoir is not None:
+                fuel_status["reservoir_tons"] = fuel_reservoir
+                if fuel_reservoir_capacity:
+                    fuel_status["reservoir_capacity_tons"] = fuel_reservoir_capacity
+            if fuel_status:
+                vehicle_status["fuel"] = fuel_status
         
         # Create a copy of ship_info so we don't modify the original
         ship_display = dict(ship_info)
@@ -3564,6 +3815,10 @@ class PromptGenerator:
             except Exception as e:
                 log('error', f"Error executing status generator: {e}", traceback.format_exc())
 
+        # Format and return the final status message
+        return "\n\n".join(['# '+entry[0]+'\n' + self.dump_prompt_yaml(entry[1]) for entry in status_entries])
+
+    def dump_prompt_yaml(self, value: Any) -> str:
         def float_representer(dumper, value):
             text = '{:.3f}'.format(value)
             if '.' in text:
@@ -3578,9 +3833,36 @@ class PromptGenerator:
             pass
 
         CustomDumper.add_representer(float, float_representer)
+        return yaml.dump(value, Dumper=CustomDumper, sort_keys=False)
 
-        # Format and return the final status message
-        return "\n\n".join(['# '+entry[0]+'\n' + yaml.dump(entry[1], Dumper=CustomDumper, sort_keys=False) for entry in status_entries])
+    def generate_compact_status_message(self, projected_states: ProjectedStates, profile_name: str) -> str:
+        if profile_name == "combat-focus":
+            return "# Combat Focus\n" + self.dump_prompt_yaml(compact_combat_status(projected_states))
+        if profile_name == "mining":
+            return "# Mining Focus\n" + self.dump_prompt_yaml(compact_mining_status(projected_states))
+        if profile_name == "travel-docking-exploration":
+            return "# Travel Docking Exploration Focus\n" + self.dump_prompt_yaml(compact_travel_status(projected_states))
+        if profile_name == "commerce":
+            return "# Commerce Focus\n" + self.dump_prompt_yaml(compact_tool_status(projected_states))
+        if profile_name == "quiet":
+            return "# Quiet Focus\n" + self.dump_prompt_yaml(compact_tool_status(projected_states))
+        if profile_name == "tool-result":
+            return "# Tool Result Focus\n" + self.dump_prompt_yaml(compact_tool_status(projected_states))
+        return self.generate_status_message(projected_states)
+
+    def is_focus_tool_result_pending(self, pending_events: list[Event]) -> bool:
+        focus_tool_names = {"setFocusProfile", "switchFocus", "getFocusProfile"}
+        for event in pending_events:
+            if not isinstance(event, ToolEvent):
+                continue
+            for request in event.request or []:
+                function = request.get("function") if isinstance(request, dict) else None
+                if isinstance(function, dict) and function.get("name") in focus_tool_names:
+                    return True
+            for result in event.results or []:
+                if isinstance(result, dict) and result.get("name") in focus_tool_names:
+                    return True
+        return False
 
     # TODO use events as passed from db, not in mem copy, pending (new not yet reated to), short_term (reacted to but not yet part of summary memory), memories (historc summaries of events)
     @observe()
@@ -3596,12 +3878,26 @@ class PromptGenerator:
         
         # Initialize usage stats
         usage_stats = PromptUsageStats()
+        focus = resolve_focus_profile(projected_states, pending_events, self.active_focus_profile)
+        filtered_events: dict[str, int] = {}
+        included_event_counts: dict[str, int] = {}
 
         for event in events[::-1]:
             if len(conversational_pieces) >= 50:
                 break
 
             is_pending = event in pending_events
+            current_event_name = event_name(event)
+            if not self.should_include_event_for_focus(event, focus, is_pending):
+                filtered_events[current_event_name] = filtered_events.get(current_event_name, 0) + 1
+                continue
+
+            max_events = focus.profile.max_events_per_name.get(current_event_name)
+            if max_events is not None and included_event_counts.get(current_event_name, 0) >= max_events:
+                filtered_events[current_event_name] = filtered_events.get(current_event_name, 0) + 1
+                continue
+            included_event_counts[current_event_name] = included_event_counts.get(current_event_name, 0) + 1
+
             event_time = datetime.fromisoformat(
                 event.content.get('timestamp') if isinstance(event, GameEvent) else event.timestamp)
             if not event_time.tzinfo:
@@ -3622,7 +3918,11 @@ class PromptGenerator:
                     continue
 
                 if len(conversational_pieces) < 20:
-                    is_important = is_pending and event_type in self.important_game_events
+                    focus_state = self.get_focus_event_reaction_state(event_type, focus.profile.name)
+                    is_important = is_pending and (
+                        focus_state == "on"
+                        or (focus_state is None and event_type in self.important_game_events)
+                    )
                     message = self.event_message(event, time_offset, is_important)
                     if message:
                         piece = message
@@ -3638,7 +3938,11 @@ class PromptGenerator:
                     len(conversational_pieces) < 20
                     and event_type != "Status"
                 ):
-                    is_important = is_pending and event_type in self.important_game_events
+                    focus_state = self.get_focus_event_reaction_state(event_type, focus.profile.name)
+                    is_important = is_pending and (
+                        focus_state == "on"
+                        or (focus_state is None and event_type in self.important_game_events)
+                    )
                     message = self.status_messages(event, time_offset, is_important)
                     if message:
                         piece = message
@@ -3674,7 +3978,18 @@ class PromptGenerator:
             if piece:
                 usage_stats.conversation_chars += len(json.dumps(piece))
 
-        status_msg_content = self.generate_status_message(projected_states)
+        if focus.profile.name == "tool-result" and self.is_focus_tool_result_pending(pending_events):
+            status_msg_content = (
+                "# Focus Tool Result\n"
+                "ToolRelevantShipState: omitted because this tool only changes or reports the COVAS focus profile.\n"
+                "Instruction: reply only about the focus profile result."
+            )
+        else:
+            status_msg_content = (
+                self.generate_compact_status_message(projected_states, focus.profile.name)
+                if focus.profile.compact_status
+                else self.generate_status_message(projected_states)
+            )
         usage_stats.status_chars = len(status_msg_content)
         conversational_pieces.append(
             {
@@ -3682,10 +3997,19 @@ class PromptGenerator:
                 "content": status_msg_content,
             }
         )
+
+        if focus.profile.prompt_note:
+            usage_stats.status_chars += len(focus.profile.prompt_note)
+            conversational_pieces.append(
+                {
+                    "role": "user",
+                    "content": focus.profile.prompt_note,
+                }
+            )
         
         # Add memories
         memory_pieces_count = 0
-        for event in memories:
+        for event in (memories if focus.profile.include_memories else []):
             if memory_pieces_count > 5:
                 break
             memory_pieces_count += 1
@@ -3734,6 +4058,14 @@ class PromptGenerator:
         conversational_pieces.reverse()  # Restore the original order
 
         #log('debug', 'states', json.dumps(projected_states))
+        if focus.profile.name != "normal":
+            log('debug', 'focus profile', {
+                "profile": focus.profile.name,
+                "reason": focus.reason,
+                "automatic": focus.automatic,
+                "filtered_events": filtered_events,
+                "pending_events": [event_name(event) for event in pending_events],
+            })
         prompt_json = json.dumps(conversational_pieces)
         log('debug', 'conversation', prompt_json)
         if self.previous_prompt_json:

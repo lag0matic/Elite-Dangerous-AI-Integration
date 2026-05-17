@@ -787,6 +787,7 @@ class Character(TypedDict, total=False):
     tts_environment_srv_effects_var: bool
     avatar: str  # Absolute file path for the avatar image
     event_reactions: dict[str, str]
+    focus_profile_reactions: dict[str, dict[str, str]]
     event_reaction_enabled_var: bool
     react_to_text_local_var: bool
     react_to_text_starsystem_var: bool
@@ -1232,6 +1233,16 @@ def migrate(data: dict) -> dict:
             data['overlay_mode'] = 'both'
         data.pop('overlay_vr_streamer_mode', None)
 
+    for character in data.get('characters', []):
+        if 'focus_profile_reactions' not in character or not isinstance(character.get('focus_profile_reactions'), dict):
+            character['focus_profile_reactions'] = {}
+
+    allowed_actions = data.get('allowed_actions')
+    if isinstance(allowed_actions, list) and len(allowed_actions) > 0:
+        for focus_action in ("setFocusProfile", "getFocusProfile"):
+            if focus_action not in allowed_actions:
+                allowed_actions.append(focus_action)
+
     return data
 
 
@@ -1319,6 +1330,7 @@ def getDefaultCharacter(config: Config) -> Character:
         "tts_environment_srv_effects_var": True,
         "avatar": '',  # No avatar by default
         "event_reactions": default_event_reactions,
+        "focus_profile_reactions": {},
         "event_reaction_enabled_var": True,
         "react_to_text_local_var": True,
         "react_to_text_starsystem_var": True,

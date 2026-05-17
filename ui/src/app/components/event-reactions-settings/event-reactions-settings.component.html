@@ -11,6 +11,20 @@
             events and provide additional details or commentary. You can customize the reactions below.</p>
 
         @if (getCharacterProperty('event_reaction_enabled_var', false)) {
+            <div class="focus-profile-selector">
+                <mat-form-field appearance="outline" class="focus-profile-field" subscriptSizing="dynamic">
+                    <mat-label>Focus profile</mat-label>
+                    <mat-select
+                        [ngModel]="selectedFocusProfile"
+                        (ngModelChange)="onFocusProfileChange($event)">
+                        @for (profile of focusProfiles; track profile.value) {
+                            <mat-option [value]="profile.value">{{ profile.label }}</mat-option>
+                        }
+                    </mat-select>
+                    <mat-hint>{{ getSelectedFocusProfileDescription() }}</mat-hint>
+                </mat-form-field>
+            </div>
+
             <div class="event-search-and-reset">
                 <mat-form-field class="search-box" subscriptSizing="dynamic">
                     <mat-label>Search events</mat-label>
@@ -56,6 +70,13 @@
                                         <span class="category-count">{{ getCategoryCounts(section.key).hidden }}</span>
                                     </mat-button-toggle>
                                 </mat-button-toggle-group>
+                                @if (selectedFocusProfile !== "global") {
+                                    <span class="category-override-count"
+                                          [matTooltip]="'Profile-specific overrides in ' + section.key"
+                                          matTooltipPosition="below">
+                                        {{ getCategoryOverrideCount(section.key) }} overrides
+                                    </span>
+                                }
                             </mat-panel-description>
                         </mat-expansion-panel-header>
                         @for (e of section.value | keyvalue:orderByKey; track e.key) {
@@ -81,6 +102,17 @@
                                         <mat-icon>{{ getEventIcon("hidden") }}</mat-icon>
                                     </mat-button-toggle>
                                 </mat-button-toggle-group>
+                                @if (selectedFocusProfile !== "global") {
+                                    <button
+                                        mat-icon-button
+                                        class="event-override-button"
+                                        [disabled]="getEventStateSource(e.key) === 'global'"
+                                        (click)="clearEventOverride(e.key)"
+                                        [matTooltip]="getEventStateSource(e.key) === 'profile' ? 'Clear this focus-profile override' : 'Using global default'"
+                                        matTooltipPosition="below">
+                                        <mat-icon>{{ getEventStateSource(e.key) === 'profile' ? 'tune' : 'link' }}</mat-icon>
+                                    </button>
+                                }
                             </div>
                             @if (e.key === "ProspectedAsteroid") {
                                 <div class="event-suboptions">

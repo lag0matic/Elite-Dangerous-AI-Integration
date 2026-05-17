@@ -26,6 +26,7 @@ import {
     Character,
     CharacterService,
     EventReactionState,
+    FocusProfileName,
 } from "../../services/character.service";
 import {
     Config,
@@ -70,6 +71,17 @@ export class EventReactionsSettingsComponent implements OnDestroy {
     filteredEventReactions: Record<string, Record<string, EventReactionState>> = {};
     eventSearchQuery: string = "";
     expandedSection: string | null = null;
+    selectedFocusProfile: "global" | FocusProfileName = "global";
+    focusProfiles: Array<{ value: "global" | FocusProfileName; label: string; description: string }> = [
+        { value: "global", label: "Global defaults", description: "Base reaction settings used outside focus-profile overrides." },
+        { value: "combat-focus", label: "Combat focus", description: "Overrides while combat focus is active." },
+        { value: "mining", label: "Mining", description: "Overrides while mining focus is active." },
+        { value: "travel-docking-exploration", label: "Travel / Docking / Exploration", description: "Overrides for travel, docking, navigation, and exploration." },
+        { value: "commerce", label: "Commerce", description: "Overrides for market, sale, repair, refuel, and merits events." },
+        { value: "quiet", label: "Quiet", description: "Overrides for low-chatter mode." },
+        { value: "full-context", label: "Full context", description: "Overrides while broad awareness is active." },
+        { value: "normal", label: "Normal", description: "Overrides while normal focus is active." },
+    ];
     public GameEventTooltips = GameEventTooltips;
     gameEventCategories = GameEventCategories;
     showImportSelector = false;
@@ -136,10 +148,15 @@ export class EventReactionsSettingsComponent implements OnDestroy {
     ) {
         if (!this.activeCharacter) return;
 
-        await this.characterService.setCharacterEventProperty(
-            event,
-            state,
-        );
+        if (this.selectedFocusProfile === "global") {
+            await this.characterService.setCharacterEventProperty(
+                event,
+                state,
+            );
+            return;
+        }
+
+        await this.setFocusProfileEventState(this.selectedFocusProfile, event, state);
     }
 
     async resetGameEvents() {
@@ -207,7 +224,7 @@ export class EventReactionsSettingsComponent implements OnDestroy {
             return;
         }
 
-        const eventReactions = this.getCharacterProperty("event_reactions", {} as Record<string, EventReactionState>);
+        const eventReactions = this.getVisibleEventReactions();
 
         if (!query && this.eventSearchQuery) {
             this.eventSearchQuery = "";
@@ -244,7 +261,7 @@ export class EventReactionsSettingsComponent implements OnDestroy {
     }
 
     clearEventSearch() {
-        const eventReactions = this.getCharacterProperty("event_reactions", {});
+        const eventReactions = this.getVisibleEventReactions();
         this.eventSearchQuery = "";
         this.filteredEventReactions = this.categorizeEvents(eventReactions);
         this.expandedSection = null;
@@ -261,22 +278,49 @@ export class EventReactionsSettingsComponent implements OnDestroy {
     async setCategoryState(categoryName: string, state: EventReactionState) {
         if (!this.activeCharacter) return;
 
-        const currentEventReactions = { ...(this.activeCharacter.event_reactions || {}) };
         const eventsInCategory = this.gameEventCategories[categoryName] || [];
 
-        for (const eventName of eventsInCategory) {
-            currentEventReactions[eventName] = state;
+        if (this.selectedFocusProfile === "global") {
+            const currentEventReactions = { ...(this.activeCharacter.event_reactions || {}) };
+            for (const eventName of eventsInCategory) {
+                currentEventReactions[eventName] = state;
+            }
+
+            await this.characterService.setCharacterProperty(
+                "event_reactions",
+                currentEventReactions,
+            );
+            return;
         }
 
-        await this.characterService.setCharacterProperty(
-            "event_reactions",
-            currentEventReactions,
-        );
+        const focusReactions = this.getFocusProfileReactions(this.selectedFocusProfile);
+        for (const eventName of eventsInCategory) {
+            focusReactions[eventName] = state;
+        }
+        await this.setFocusProfileReactions(this.selectedFocusProfile, focusReactions);
     }
 
     getEventState(eventName: string): "on" | "off" | "hidden" {
         if (!this.activeCharacter) return "off";
-        return this.activeCharacter.event_reactions?.[eventName] ?? "off";
+        if (this.selectedFocusProfile === "global") {
+            return this.activeCharacter.event_reactions?.[eventName] ?? "off";
+        }
+        return this.getFocusProfileReactions(this.selectedFocusProfile)[eventName]
+            ?? this.activeCharacter.event_reactions?.[eventName]
+            ?? "off";
+    }
+
+    getEventStateSource(eventName: string): "profile" | "global" {
+        if (!this.activeCharacter || this.selectedFocusProfile === "global") return "global";
+        const focusReactions = this.getFocusProfileReactions(this.selectedFocusProfile);
+        return Object.prototype.hasOwnProperty.call(focusReactions, eventName) ? "profile" : "global";
+    }
+
+    async clearEventOverride(eventName: string) {
+        if (!this.activeCharacter || this.selectedFocusProfile === "global") return;
+        const focusReactions = this.getFocusProfileReactions(this.selectedFocusProfile);
+        delete focusReactions[eventName];
+        await this.setFocusProfileReactions(this.selectedFocusProfile, focusReactions);
     }
 
     getEventIcon(state: "on" | "off" | "hidden"): string {
@@ -306,6 +350,63 @@ export class EventReactionsSettingsComponent implements OnDestroy {
             else acc.off += 1;
             return acc;
         }, initial);
+    }
+
+    getCategoryOverrideCount(categoryKey: string): number {
+        if (!this.activeCharacter || this.selectedFocusProfile === "global") return 0;
+        const section = this.filteredEventReactions[categoryKey];
+        if (!section) return 0;
+        const focusReactions = this.getFocusProfileReactions(this.selectedFocusProfile);
+        return Object.keys(section).filter((eventName) =>
+            Object.prototype.hasOwnProperty.call(focusReactions, eventName)
+        ).length;
+    }
+
+    onFocusProfileChange(profile: "global" | FocusProfileName) {
+        this.selectedFocusProfile = profile;
+        this.filterEvents(this.eventSearchQuery);
+    }
+
+    getSelectedFocusProfileDescription(): string {
+        return this.focusProfiles.find((profile) => profile.value === this.selectedFocusProfile)?.description ?? "";
+    }
+
+    private getVisibleEventReactions(): Record<string, EventReactionState> {
+        if (!this.activeCharacter) return {};
+        if (this.selectedFocusProfile === "global") {
+            return this.activeCharacter.event_reactions || {};
+        }
+        return {
+            ...(this.activeCharacter.event_reactions || {}),
+            ...this.getFocusProfileReactions(this.selectedFocusProfile),
+        };
+    }
+
+    private getFocusProfileReactions(profile: FocusProfileName): Record<string, EventReactionState> {
+        if (!this.activeCharacter) return {};
+        return { ...(this.activeCharacter.focus_profile_reactions?.[profile] || {}) };
+    }
+
+    private async setFocusProfileEventState(
+        profile: FocusProfileName,
+        eventName: string,
+        state: EventReactionState,
+    ) {
+        const focusReactions = this.getFocusProfileReactions(profile);
+        focusReactions[eventName] = state;
+        await this.setFocusProfileReactions(profile, focusReactions);
+    }
+
+    private async setFocusProfileReactions(
+        profile: FocusProfileName,
+        reactions: Record<string, EventReactionState>,
+    ) {
+        if (!this.activeCharacter) return;
+        const next = {
+            ...(this.activeCharacter.focus_profile_reactions || {}),
+            [profile]: reactions,
+        };
+        await this.characterService.setCharacterProperty("focus_profile_reactions", next);
     }
 
     getCategoryAggregateState(categoryKey: string): EventReactionState | null {

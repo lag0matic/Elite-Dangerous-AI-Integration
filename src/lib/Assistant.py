@@ -36,6 +36,7 @@ from threading import Thread
 from .actions.Actions import set_speed, fire_weapons, get_visuals
 from .Projections import get_state_dict, ProjectedStates
 from .QuestCatalogManager import remove_orphaned_quest_states
+from .FocusProfiles import resolve_focus_profile
 
 FALLBACK_STAGE_ID = "__fallback__"
 
@@ -867,7 +868,9 @@ class Assistant:
                     else:
                         reasons.append(event.kind)
             
-            use_tools = self.config["tools_var"] and ('user' in reasons or 'tool' in reasons)
+            # Tool result turns should resolve into spoken verification, not a fresh
+            # chance for the model to improvise a follow-up action.
+            use_tools = self.config["tools_var"] and ('user' in reasons)
 
             current_status = get_state_dict(projected_states, "CurrentStatus")
             flags = current_status.get("flags", {})
@@ -954,6 +957,18 @@ class Assistant:
         if len(self.pending) == 0:
             return False
 
+        effective_focus = resolve_focus_profile(
+            states,
+            self.pending,
+            self.prompt_generator.get_focus_profile(),
+        )
+
+        def focus_reaction_state(event_type: str) -> str | None:
+            return self.prompt_generator.get_focus_event_reaction_state(
+                event_type,
+                effective_focus.profile.name,
+            )
+
         for event in self.pending:
             # check if pending contains conversational events
             if isinstance(event, ConversationEvent) and event.kind == "user":
@@ -966,7 +981,13 @@ class Assistant:
                     continue
                 return True
 
-            if isinstance(event, GameEvent) and event.content.get("event") in self.enabled_game_events:
+            if isinstance(event, GameEvent):
+                event_type = event.content.get("event")
+                focus_state = focus_reaction_state(event_type)
+                if focus_state == "hidden":
+                    continue
+                if event_type not in self.enabled_game_events and focus_state != "on":
+                    continue
                 if event.content.get("event") == "ReceiveText":
                     if event.content.get("Channel") not in ['wing', 'voicechat', 'friend', 'player'] and (
                         (not character["react_to_text_local_var"] and event.content.get("Channel") == 'local') or
@@ -994,7 +1015,13 @@ class Assistant:
 
                 return True
 
-            if isinstance(event, StatusEvent) and event.status.get("event") in self.enabled_game_events:
+            if isinstance(event, StatusEvent):
+                event_type = event.status.get("event")
+                focus_state = focus_reaction_state(event_type)
+                if focus_state == "hidden":
+                    continue
+                if event_type not in self.enabled_game_events and focus_state != "on":
+                    continue
                 if event.status.get("event") in ["InDanger", "OutOfDanger"]:
                     ship_info = get_state_dict(states, "ShipInfo")
                     location = get_state_dict(states, "Location")
@@ -1021,6 +1048,12 @@ class Assistant:
             #     return True
 
             if isinstance(event, ProjectedEvent):
+                event_type = event.content.get("event")
+                focus_state = focus_reaction_state(event_type)
+                if focus_state == "hidden":
+                    continue
+                if focus_state == "on":
+                    return True
                 if event.content.get("event").startswith('ScanOrganic') and 'ScanOrganic' in self.enabled_game_events:
                     return True
                 if event.content.get("event") in self.enabled_game_events:

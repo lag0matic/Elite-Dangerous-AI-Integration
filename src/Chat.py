@@ -146,11 +146,19 @@ class Chat:
         self.enabled_game_events: list[str] = []
         disabled_events: list[str] = []
         event_reactions = self.character.get("event_reactions", {})
+        focus_profile_reactions = self.character.get("focus_profile_reactions", {})
         if self.character.get("event_reaction_enabled_var", False):
             for event, state in event_reactions.items():
                 if state == "on":
                     self.enabled_game_events.append(event)
                 if state == "hidden":
+                    has_visible_focus_override = any(
+                        isinstance(profile_reactions, dict)
+                        and profile_reactions.get(event) in ("on", "off")
+                        for profile_reactions in focus_profile_reactions.values()
+                    ) if isinstance(focus_profile_reactions, dict) else False
+                    if has_visible_focus_override:
+                        continue
                     disabled_events.append(event)
 
         log("debug", "Initializing Controller Manager...")
@@ -336,6 +344,7 @@ class Chat:
             system_db=self.system_database,
             weapon_types=cast(list[dict], self.config.get("weapon_types", [])),
             disabled_game_events=disabled_events,
+            focus_profile_reactions=self.character.get("focus_profile_reactions", {}),
         )
 
         log("debug", "Initializing event manager...")

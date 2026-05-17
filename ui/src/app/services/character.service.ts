@@ -10,6 +10,14 @@ export interface ConfigWithCharacters extends Config {
 }
 
 export type EventReactionState = "on" | "off" | "hidden";
+export type FocusProfileName =
+    | "normal"
+    | "combat-focus"
+    | "mining"
+    | "travel-docking-exploration"
+    | "commerce"
+    | "quiet"
+    | "full-context";
 
 export interface CharacterTTSDistortionConfig {
     enabled?: boolean;
@@ -111,6 +119,9 @@ export interface Character {
     react_to_danger_onfoot_var: boolean;
     react_to_danger_supercruise_var: boolean;
     event_reactions: { [key: string]: EventReactionState };
+    focus_profile_reactions?: {
+        [profile in FocusProfileName]?: { [key: string]: EventReactionState };
+    };
 }
 
 

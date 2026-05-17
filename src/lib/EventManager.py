@@ -311,14 +311,15 @@ class EventManager:
                 timestamp = datetime.now(timezone.utc).timestamp()
                 event.processed_at = timestamp
 
+                if isinstance(event, GameEvent) and event.historic:
+                    self.update_projections(event, save_later=True)
+                    self.processed.append(event)
+                    continue
+
                 self.short_term_memory.insert_event(event, event.processed_at, commit=False)
                 projected_events = self.update_projections(event, save_later=True)
 
                 self.pending.append(event)
-
-                if isinstance(event, GameEvent) and event.historic:
-                    #self.processed.append(event)
-                    continue
 
                 projected_states = {}
                 for projection in self.projections:

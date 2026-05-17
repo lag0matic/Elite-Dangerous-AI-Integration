@@ -20,6 +20,14 @@
   }
 }
 
+.focus-profile-selector {
+  margin: 16px 0;
+
+  .focus-profile-field {
+    width: min(520px, 100%);
+  }
+}
+
 :host ::ng-deep .mat-pseudo-checkbox,
 :host ::ng-deep .mat-pseudo-checkbox-checked {
   display: none !important;
@@ -69,6 +77,19 @@
       align-items: center;
       justify-content: center;
     }
+
+    mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      line-height: 18px;
+    }
+  }
+
+  .event-override-button {
+    width: 36px;
+    height: 36px;
+    margin-right: 12px;
 
     mat-icon {
       font-size: 18px;
@@ -143,6 +164,13 @@
     width: 3ch;
     display: inline-block;
     text-align: center;
+  }
+
+  .category-override-count {
+    min-width: 8ch;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    text-align: right;
   }
 }
 

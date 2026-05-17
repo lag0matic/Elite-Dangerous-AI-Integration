@@ -508,11 +508,6 @@ def galaxy_map_open(args, projected_states, galaxymap_key="GalaxyMapOpen"):
     setGameWindowActive()
     current_gui = get_state_dict(projected_states, 'CurrentStatus').get('GuiFocus', '')
 
-    if 'start_navigation' in args and args['start_navigation']:
-        nav_route = get_state_dict(projected_states, 'NavInfo').get('NavRoute', [])
-        if nav_route and nav_route[-1].get('StarSystem') == args.get('system_name'):
-            return f"The route to {args['system_name']} is already set"
-
     if current_gui in ['SAA', 'FSS', 'Codex']:
         raise Exception('Galaxy map can not be opened currently, the active GUI needs to be closed first')
 
@@ -663,10 +658,31 @@ def eject_all_cargo(args, projected_states):
 
 def landing_gear_toggle(args, projected_states):
     checkStatus(projected_states, {'Docked': True, 'Landed': True, 'Supercruise': True})
+    current_status = get_state_dict(projected_states, 'CurrentStatus')
+    currently_down = bool(current_status.get('flags', {}).get('LandingGearDown'))
+    desired_down = args.get('deploy') if isinstance(args.get('deploy'), bool) else None
+
+    if desired_down is not None and currently_down == desired_down:
+        return f"Landing gear already {'deployed' if desired_down else 'retracted'}"
+
     setGameWindowActive()
     keys.send('LandingGearToggle')
-    current_status = get_state_dict(projected_states, 'CurrentStatus')
-    return f"Landing gear {'deployed ' if not current_status.get('flags', {}).get('LandingGearDown') else 'retracted'}"
+
+    def gear_matches(status):
+        flags = getattr(status, 'flags', None)
+        if flags is None:
+            return False
+        landing_gear_down = getattr(flags, 'LandingGearDown', None)
+        if desired_down is not None:
+            return landing_gear_down == desired_down
+        return landing_gear_down != currently_down
+
+    try:
+        verified_status = event_manager.wait_for_condition('CurrentStatus', gear_matches, 3)
+        landing_gear_down = getattr(verified_status.flags, 'LandingGearDown', currently_down)
+        return f"Landing gear {'deployed' if landing_gear_down else 'retracted'}"
+    except TimeoutError:
+        return "Landing gear toggle sent, but final gear state could not be confirmed"
 
 
 def use_shield_cell(args, projected_states):
@@ -1460,6 +1476,107 @@ def register_actions(actionManager: ActionManager, eventManager: EventManager, p
 
     setGameWindowActive()
 
+    def set_focus_profile(args, projected_states):
+        profile = str(args.get("profile", args.get("focus", "normal")))
+        resolved = promptGenerator.set_focus_profile(profile)
+        return (
+            f"COVAS focus profile changed to {resolved}. "
+            "This is a focus-control result, not a ship-status result."
+        )
+
+    def get_focus_profile(args, projected_states):
+        return (
+            f"Current COVAS focus profile is {promptGenerator.get_focus_profile()}. "
+            "This is a focus-control result, not a ship-status result."
+        )
+
+    focus_profile_enum = [
+        "normal",
+        "combat-focus",
+        "mining",
+        "travel-docking-exploration",
+        "commerce",
+        "quiet",
+        "full-context",
+    ]
+
+    actionManager.registerAction('setFocusProfile', "Set COVAS focus profile / awareness mode. Use this when the Commander asks for mining focus, combat focus, travel focus, quiet mode, full context, or normal awareness.", {
+        "type": "object",
+        "properties": {
+            "profile": {
+                "type": "string",
+                "description": "Focus profile to use until changed again.",
+                "enum": focus_profile_enum,
+            }
+        },
+        "required": ["profile"]
+    }, set_focus_profile, 'global', permission='setFocusProfile', cache_prefill={
+        "normal focus": {"profile": "normal"},
+        "normal awareness": {"profile": "normal"},
+        "default focus": {"profile": "normal"},
+        "combat focus": {"profile": "combat-focus"},
+        "combat awareness": {"profile": "combat-focus"},
+        "mining focus": {"profile": "mining"},
+        "mining awareness": {"profile": "mining"},
+        "travel focus": {"profile": "travel-docking-exploration"},
+        "docking focus": {"profile": "travel-docking-exploration"},
+        "exploration focus": {"profile": "travel-docking-exploration"},
+        "commerce focus": {"profile": "commerce"},
+        "market focus": {"profile": "commerce"},
+        "trade focus": {"profile": "commerce"},
+        "quiet mode": {"profile": "quiet"},
+        "be quiet": {"profile": "quiet"},
+        "full context": {"profile": "full-context"},
+        "full awareness": {"profile": "full-context"},
+    })
+
+    actionManager.registerAction('switchFocus', "Switch COVAS focus profile / awareness mode. Use this when the Commander asks to switch to mining focus, combat focus, travel focus, quiet mode, full context, or normal awareness.", {
+        "type": "object",
+        "properties": {
+            "focus": {
+                "type": "string",
+                "description": "Focus profile to use until changed again.",
+                "enum": focus_profile_enum,
+            }
+        },
+        "required": ["focus"]
+    }, set_focus_profile, 'global', permission='setFocusProfile', cache_prefill={
+        "normal focus": {"focus": "normal"},
+        "normal awareness": {"focus": "normal"},
+        "default focus": {"focus": "normal"},
+        "combat focus": {"focus": "combat-focus"},
+        "combat awareness": {"focus": "combat-focus"},
+        "mining focus": {"focus": "mining"},
+        "mining awareness": {"focus": "mining"},
+        "travel focus": {"focus": "travel-docking-exploration"},
+        "docking focus": {"focus": "travel-docking-exploration"},
+        "exploration focus": {"focus": "travel-docking-exploration"},
+        "commerce focus": {"focus": "commerce"},
+        "market focus": {"focus": "commerce"},
+        "trade focus": {"focus": "commerce"},
+        "quiet mode": {"focus": "quiet"},
+        "be quiet": {"focus": "quiet"},
+        "full context": {"focus": "full-context"},
+        "full awareness": {"focus": "full-context"},
+    })
+
+    actionManager.registerAction('getFocusProfile', "Get the current COVAS focus profile / awareness mode.", {
+        "type": "object",
+        "properties": {}
+    }, get_focus_profile, 'global', permission='getFocusProfile', cache_prefill={
+        "current focus": {},
+        "current focus profile": {},
+        "what focus are you in": {},
+        "what is your current focus": {},
+        "what is the current focus": {},
+        "what's your current focus": {},
+        "what's the current focus": {},
+        "what awareness mode are you in": {},
+        "what is your awareness mode": {},
+        "what's your awareness mode": {},
+        "get focus profile": {},
+    })
+
     # Build weapon type enum from custom weapons plus defaults
     weapon_type_enum = ["primary", "secondary", "discovery_scanner"]
     for weapon in weapon_types:
@@ -2002,16 +2119,27 @@ def register_actions(actionManager: ActionManager, eventManager: EventManager, p
 
     actionManager.registerAction('landingGearToggle', "Toggle landing gear", {
         "type": "object",
-        "properties": {}
+        "properties": {
+            "deploy": {
+                "type": "boolean",
+                "description": "Set true to deploy/lower landing gear, false to retract/raise landing gear. Omit to toggle."
+            }
+        }
     }, landing_gear_toggle, 'mainship', permission='landingGearToggle', cache_prefill={
         "landing gear": {},
         "gear": {},
-        "deploy gear": {},
-        "retract gear": {},
-        "landing gear up": {},
-        "landing gear down": {},
-        "gear up": {},
-        "gear down": {},
+        "deploy gear": {"deploy": True},
+        "lower gear": {"deploy": True},
+        "landing gear down": {"deploy": True},
+        "gear down": {"deploy": True},
+        "legs down": {"deploy": True},
+        "retract gear": {"deploy": False},
+        "raise gear": {"deploy": False},
+        "landing gear up": {"deploy": False},
+        "gear up": {"deploy": False},
+        "legs up": {"deploy": False},
+        "bring gear up": {"deploy": False},
+        "bring landing gear up": {"deploy": False},
     })
 
     actionManager.registerAction('useShieldCell', "Use shield cell", {
@@ -2032,11 +2160,23 @@ def register_actions(actionManager: ActionManager, eventManager: EventManager, p
         "properties": {}
     }, request_docking, 'mainship', permission='requestDocking', cache_prefill={
         "request docking": {},
+        "request dock": {},
         "dock": {},
+        "dock ship": {},
         "docking request": {},
         "permission to dock": {},
+        "request docking permission": {},
         "requesting docking": {},
         "docking permission": {},
+        "landing clearance": {},
+        "request landing clearance": {},
+        "get docking clearance": {},
+        "request ducking": {},
+        "request docker": {},
+        "request stalking": {},
+        "request stocking": {},
+        "request doging": {},
+        "request docing": {},
     })
 
     actionManager.registerAction('undockShip', "", {
@@ -2057,11 +2197,23 @@ def register_actions(actionManager: ActionManager, eventManager: EventManager, p
         "properties": {}
     }, fighter_request_dock, 'fighter', permission='fighterRequestDock', cache_prefill={
         "request docking": {},
+        "request dock": {},
         "dock": {},
+        "dock ship": {},
         "docking request": {},
         "permission to dock": {},
+        "request docking permission": {},
         "requesting docking": {},
         "docking permission": {},
+        "landing clearance": {},
+        "request landing clearance": {},
+        "get docking clearance": {},
+        "request ducking": {},
+        "request docker": {},
+        "request stalking": {},
+        "request stocking": {},
+        "request doging": {},
+        "request docing": {},
     })
 
     # Register actions - SRV Actions (Horizons)

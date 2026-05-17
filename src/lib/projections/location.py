@@ -51,6 +51,18 @@ class Location(Projection[LocationState]):
     def _normalize_name(value: str) -> str:
         return value.strip().casefold()
 
+    def _clear_local_context(self) -> None:
+        """Clear body/station fields that are only valid near the current point of interest."""
+        self.state.Star = None
+        self.state.Planet = None
+        self.state.PlanetaryRing = None
+        self.state.StellarRing = None
+        self.state.Station = None
+        self.state.AsteroidCluster = None
+        self.state.Docked = None
+        self.state.Landed = None
+        self.state.NearestDestination = None
+
     def _annotate_factions(self, factions: Optional[list[LocationEventFactionsItem]]) -> Optional[list[LocationEventFactionsItem]]:
         if factions is None:
             return None
@@ -95,6 +107,7 @@ class Location(Projection[LocationState]):
             star_pos = payload.get("StarPos", [0, 0, 0])
 
             # Reset state and set new values
+            self._clear_local_context()
             self.state.StarSystem = star_system
             self.state.StarPos = star_pos
             if "SystemAddress" in payload:
@@ -111,6 +124,7 @@ class Location(Projection[LocationState]):
         if event_name == "SupercruiseEntry":
             payload = cast(SupercruiseEntryEvent, event.content)
             star_system = payload.get("StarSystem", "Unknown")
+            self._clear_local_context()
             self.state.StarSystem = star_system
 
         if event_name == "SupercruiseExit":
@@ -119,6 +133,7 @@ class Location(Projection[LocationState]):
             body_type = payload.get("BodyType", "Null")
             body = payload.get("Body", "Unknown")
 
+            self._clear_local_context()
             self.state.StarSystem = star_system
             if body_type and body_type != "Null":
                 setattr(self.state, str(body_type), body)
@@ -130,6 +145,7 @@ class Location(Projection[LocationState]):
             star_pos = payload.get("StarPos", [0, 0, 0])
             body_type = payload.get("BodyType", "Null")
             body = payload.get("Body", "Unknown")
+            self._clear_local_context()
             self.state.StarSystem = star_system
             self.state.StarPos = star_pos
             self.state.SystemAddress = cast(Optional[int], system_address)
@@ -147,6 +163,7 @@ class Location(Projection[LocationState]):
             star_pos = payload.get("StarPos", [0, 0, 0])
             body_type = payload.get("BodyType", "Null")
             body = payload.get("Body", "Unknown")
+            self._clear_local_context()
             self.state.StarSystem = star_system
             self.state.StarPos = star_pos
             self.state.SystemAddress = cast(Optional[int], system_address)
