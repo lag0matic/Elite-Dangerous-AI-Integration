@@ -1278,6 +1278,11 @@ def merge_config_data(defaults: dict, user: dict):
                 # Copy plugin settings directly, since we don't know what settings are supposed to be there.
                 merge[key] = user.get(key) or {}
                 continue
+            if key == "focus_profile_reactions":
+                # Focus profile names are dynamic keys, so merging against the empty
+                # default dict would otherwise discard every saved profile override.
+                merge[key] = user.get(key) or {}
+                continue
                 
             # Handle dict type specially
             if isinstance(defaults.get(key), dict) and isinstance(user.get(key), dict):
@@ -1804,6 +1809,7 @@ def cast_int_float(current: dict, data: dict) -> dict:
             # Recursively cast dicts
             result[key] = cast_int_float(current[key], data[key])
         elif isinstance(current.get(key), list) and isinstance(data.get(key), list):
+            result[key] = list(data[key])
             # Iterate over the data list length (not current), to handle deletions
             for i in range(len(data[key])):
                 # Only cast if both current and data have dict at this index

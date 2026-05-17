@@ -22,9 +22,33 @@
 
 .focus-profile-selector {
   margin: 16px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
 
   .focus-profile-field {
     width: min(520px, 100%);
+  }
+}
+
+.focus-profile-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+
+  .profile-override-summary {
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  button {
+    min-height: 36px;
   }
 }
 
@@ -53,6 +77,34 @@
   .event-name {
     flex: 1;
     min-width: 160px;
+  }
+
+  .event-source {
+    flex: 0 0 80px;
+    min-width: 70px;
+    max-width: 110px;
+    display: flex;
+    justify-content: center;
+    padding: 4px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 11px;
+    line-height: 1.15;
+
+    &.profile-source {
+      border-color: rgba(255, 170, 60, 0.45);
+      background: rgba(255, 170, 60, 0.08);
+      color: rgba(255, 220, 170, 0.92);
+    }
+
+    .event-source-state {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: center;
+    }
   }
 
   .event-toggle {
@@ -171,6 +223,18 @@
     font-size: 12px;
     color: rgba(255, 255, 255, 0.7);
     text-align: right;
+  }
+
+  .category-clear-overrides {
+    width: 32px;
+    height: 32px;
+
+    mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      line-height: 18px;
+    }
   }
 }
 

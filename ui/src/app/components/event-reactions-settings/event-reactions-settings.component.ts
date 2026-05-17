@@ -162,6 +162,11 @@ export class EventReactionsSettingsComponent implements OnDestroy {
     async resetGameEvents() {
         if (this.activeCharacterIndex === null) return;
 
+        if (this.selectedFocusProfile !== "global") {
+            await this.resetSelectedFocusProfileOverrides();
+            return;
+        }
+
         const dialogRef = this.confirmationDialog.openConfirmationDialog({
             title: "Reset Game Events",
             message:
@@ -316,6 +321,30 @@ export class EventReactionsSettingsComponent implements OnDestroy {
         return Object.prototype.hasOwnProperty.call(focusReactions, eventName) ? "profile" : "global";
     }
 
+    getGlobalEventState(eventName: string): EventReactionState {
+        if (!this.activeCharacter) return "off";
+        return this.activeCharacter.event_reactions?.[eventName] ?? "off";
+    }
+
+    formatReactionState(state: EventReactionState): string {
+        switch (state) {
+            case "on":
+                return "React";
+            case "hidden":
+                return "Hidden";
+            case "off":
+            default:
+                return "See";
+        }
+    }
+
+    getEventOverrideTooltip(eventName: string): string {
+        if (this.getEventStateSource(eventName) === "profile") {
+            return `Profile override. Global is ${this.formatReactionState(this.getGlobalEventState(eventName))}. Click reset to inherit global.`;
+        }
+        return `Inherited from global: ${this.formatReactionState(this.getGlobalEventState(eventName))}.`;
+    }
+
     async clearEventOverride(eventName: string) {
         if (!this.activeCharacter || this.selectedFocusProfile === "global") return;
         const focusReactions = this.getFocusProfileReactions(this.selectedFocusProfile);
@@ -360,6 +389,45 @@ export class EventReactionsSettingsComponent implements OnDestroy {
         return Object.keys(section).filter((eventName) =>
             Object.prototype.hasOwnProperty.call(focusReactions, eventName)
         ).length;
+    }
+
+    getSelectedProfileOverrideCount(): number {
+        if (!this.activeCharacter || this.selectedFocusProfile === "global") return 0;
+        return Object.keys(this.getFocusProfileReactions(this.selectedFocusProfile)).length;
+    }
+
+    async clearCategoryOverrides(categoryKey: string) {
+        if (!this.activeCharacter || this.selectedFocusProfile === "global") return;
+        const eventsInCategory = this.gameEventCategories[categoryKey] || [];
+        const focusReactions = this.getFocusProfileReactions(this.selectedFocusProfile);
+        for (const eventName of eventsInCategory) {
+            delete focusReactions[eventName];
+        }
+        await this.setFocusProfileReactions(this.selectedFocusProfile, focusReactions);
+    }
+
+    async resetSelectedFocusProfileOverrides() {
+        if (!this.activeCharacter || this.selectedFocusProfile === "global") return;
+        const profile = this.selectedFocusProfile;
+        const label = this.focusProfiles.find((p) => p.value === profile)?.label ?? profile;
+        const dialogRef = this.confirmationDialog.openConfirmationDialog({
+            title: "Reset Focus Profile",
+            message:
+                `This will clear all overrides for ${label}. Events will fall back to the global defaults. Are you sure you want to continue?`,
+            confirmButtonText: "Reset",
+            cancelButtonText: "Cancel",
+        });
+
+        dialogRef.subscribe(async (result: boolean) => {
+            if (!result || !this.activeCharacter) return;
+            const next = { ...(this.activeCharacter.focus_profile_reactions || {}) };
+            delete next[profile];
+            await this.characterService.setCharacterProperty("focus_profile_reactions", next);
+            this.filterEvents(this.eventSearchQuery);
+            this.snackBar.open(`${label} overrides reset`, "OK", {
+                duration: 3000,
+            });
+        });
     }
 
     onFocusProfileChange(profile: "global" | FocusProfileName) {

@@ -23,6 +23,21 @@
                     </mat-select>
                     <mat-hint>{{ getSelectedFocusProfileDescription() }}</mat-hint>
                 </mat-form-field>
+                @if (selectedFocusProfile !== "global") {
+                    <div class="focus-profile-summary">
+                        <span class="profile-override-summary">
+                            {{ getSelectedProfileOverrideCount() }} profile overrides
+                        </span>
+                        <button mat-stroked-button
+                                color="warn"
+                                [disabled]="getSelectedProfileOverrideCount() === 0"
+                                (click)="resetSelectedFocusProfileOverrides()"
+                                [matTooltip]="'Clear all overrides for this focus profile and fall back to global defaults'">
+                            <mat-icon>settings_backup_restore</mat-icon>
+                            Reset profile
+                        </button>
+                    </div>
+                }
             </div>
 
             <div class="event-search-and-reset">
@@ -37,8 +52,10 @@
                 </mat-form-field>
 
                 <button mat-raised-button color="warn" (click)="resetGameEvents()"
-                        [matTooltip]="'Reset all event reaction settings to their default values'">
-                    <mat-icon>restart_alt</mat-icon> Reset to Defaults
+                        [disabled]="selectedFocusProfile !== 'global' && getSelectedProfileOverrideCount() === 0"
+                        [matTooltip]="selectedFocusProfile === 'global' ? 'Reset all global event reaction settings to their default values' : 'Clear all overrides for this focus profile'">
+                    <mat-icon>restart_alt</mat-icon>
+                    {{ selectedFocusProfile === "global" ? "Reset to Defaults" : "Reset Profile Overrides" }}
 
                 </button>
             </div>
@@ -55,17 +72,25 @@
                             <mat-panel-description class="category-actions" (click)="$event.stopPropagation()">
                                 <mat-button-toggle-group
                                     class="category-toggle"
-                                    [value]="getCategoryAggregateState(section.key)"
-                                    (change)="setCategoryState(section.key, $event.value)">
-                                    <mat-button-toggle value="on" [matTooltip]="'Enable all events in ' + section.key" matTooltipPosition="below">
+                                    [value]="getCategoryAggregateState(section.key)">
+                                    <mat-button-toggle value="on"
+                                                       (click)="setCategoryState(section.key, 'on')"
+                                                       [matTooltip]="'React to all events in ' + section.key"
+                                                       matTooltipPosition="below">
                                         <mat-icon>volume_up</mat-icon>
                                         <span class="category-count">{{ getCategoryCounts(section.key).on }}</span>
                                     </mat-button-toggle>
-                                    <mat-button-toggle value="off" [matTooltip]="'Disable reactions for all events in ' + section.key" matTooltipPosition="below">
+                                    <mat-button-toggle value="off"
+                                                       (click)="setCategoryState(section.key, 'off')"
+                                                       [matTooltip]="'Show all events in ' + section.key + ' as context without forcing a reaction'"
+                                                       matTooltipPosition="below">
                                         <mat-icon>visibility</mat-icon>
                                         <span class="category-count">{{ getCategoryCounts(section.key).off }}</span>
                                     </mat-button-toggle>
-                                    <mat-button-toggle value="hidden" [matTooltip]="'Hide all events in ' + section.key + ' from the LLM'" matTooltipPosition="below">
+                                    <mat-button-toggle value="hidden"
+                                                       (click)="setCategoryState(section.key, 'hidden')"
+                                                       [matTooltip]="'Hide all events in ' + section.key + ' from the LLM'"
+                                                       matTooltipPosition="below">
                                         <mat-icon>close</mat-icon>
                                         <span class="category-count">{{ getCategoryCounts(section.key).hidden }}</span>
                                     </mat-button-toggle>
@@ -76,6 +101,15 @@
                                           matTooltipPosition="below">
                                         {{ getCategoryOverrideCount(section.key) }} overrides
                                     </span>
+                                    <button
+                                        mat-icon-button
+                                        class="category-clear-overrides"
+                                        [disabled]="getCategoryOverrideCount(section.key) === 0"
+                                        (click)="clearCategoryOverrides(section.key)"
+                                        [matTooltip]="'Clear profile overrides in ' + section.key"
+                                        matTooltipPosition="below">
+                                        <mat-icon>link_off</mat-icon>
+                                    </button>
                                 }
                             </mat-panel-description>
                         </mat-expansion-panel-header>
@@ -87,18 +121,40 @@
                                      matTooltipPosition="above">
                                     {{ e.key }}
                                 </div>
+                                @if (selectedFocusProfile !== "global") {
+                                    <div class="event-source"
+                                         [class.profile-source]="getEventStateSource(e.key) === 'profile'"
+                                         [matTooltip]="getEventOverrideTooltip(e.key)"
+                                         matTooltipPosition="above">
+                                        <span class="event-source-state">
+                                            @if (getEventStateSource(e.key) === "profile") {
+                                                {{ formatReactionState(getGlobalEventState(e.key)) }} → {{ formatReactionState(getEventState(e.key)) }}
+                                            } @else {
+                                                {{ formatReactionState(getGlobalEventState(e.key)) }}
+                                            }
+                                        </span>
+                                    </div>
+                                }
                                 <mat-button-toggle-group
                                     class="event-toggle"
                                     [value]="getEventState(e.key)"
-                                    (change)="onEventConfigChange(section.key, e.key, $event.value)"
                                     [attr.aria-label]="'Set reaction for ' + e.key">
-                                    <mat-button-toggle value="on" matTooltip="React" matTooltipPosition="below">
+                                    <mat-button-toggle value="on"
+                                                       (click)="onEventConfigChange(section.key, e.key, 'on')"
+                                                       matTooltip="React"
+                                                       matTooltipPosition="below">
                                         <mat-icon>{{ getEventIcon("on") }}</mat-icon>
                                     </mat-button-toggle>
-                                    <mat-button-toggle value="off" matTooltip="No reaction" matTooltipPosition="below">
+                                    <mat-button-toggle value="off"
+                                                       (click)="onEventConfigChange(section.key, e.key, 'off')"
+                                                       matTooltip="See as context"
+                                                       matTooltipPosition="below">
                                         <mat-icon>{{ getEventIcon("off") }}</mat-icon>
                                     </mat-button-toggle>
-                                    <mat-button-toggle value="hidden" matTooltip="Hidden" matTooltipPosition="below">
+                                    <mat-button-toggle value="hidden"
+                                                       (click)="onEventConfigChange(section.key, e.key, 'hidden')"
+                                                       matTooltip="Hidden from prompt"
+                                                       matTooltipPosition="below">
                                         <mat-icon>{{ getEventIcon("hidden") }}</mat-icon>
                                     </mat-button-toggle>
                                 </mat-button-toggle-group>
@@ -108,9 +164,9 @@
                                         class="event-override-button"
                                         [disabled]="getEventStateSource(e.key) === 'global'"
                                         (click)="clearEventOverride(e.key)"
-                                        [matTooltip]="getEventStateSource(e.key) === 'profile' ? 'Clear this focus-profile override' : 'Using global default'"
+                                        [matTooltip]="getEventStateSource(e.key) === 'profile' ? 'Reset this event to inherit the global setting' : 'Already inheriting global setting'"
                                         matTooltipPosition="below">
-                                        <mat-icon>{{ getEventStateSource(e.key) === 'profile' ? 'tune' : 'link' }}</mat-icon>
+                                        <mat-icon>{{ getEventStateSource(e.key) === 'profile' ? 'restart_alt' : 'more_horiz' }}</mat-icon>
                                     </button>
                                 }
                             </div>
