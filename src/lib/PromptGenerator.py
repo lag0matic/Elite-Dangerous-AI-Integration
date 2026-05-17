@@ -96,6 +96,32 @@ def _humanize_journal_token(value: str) -> str:
 
 class PromptGenerator:
     previous_prompt_json = ''
+    volatile_memory_terms = (
+        "bounty",
+        "wanted",
+        "fine",
+        "legal",
+        "crime",
+        "cargo",
+        "fuel",
+        "limpet",
+        "location",
+        "system",
+        "station",
+        "carrier",
+        "docked",
+        "undocked",
+        "landing",
+        "landed",
+        "gear",
+        "shield",
+        "hull",
+        "target",
+        "route",
+        "jump",
+        "supercruise",
+        "combat",
+    )
     
     def __init__(
         self,
@@ -3871,6 +3897,34 @@ class PromptGenerator:
                     return True
         return False
 
+    def should_include_memory_for_prompt(
+        self,
+        event: MemoryEvent,
+        reference_time: datetime,
+        pending_events: list[Event],
+    ) -> bool:
+        has_commander_speech = any(
+            isinstance(pending_event, ConversationEvent) and pending_event.kind == "user"
+            for pending_event in pending_events
+        )
+        if has_commander_speech:
+            return True
+
+        memory_until = event.metadata.get("time_until", 0.0)
+        try:
+            event_time = datetime.fromtimestamp(cast(float, memory_until), tz=timezone.utc)
+        except (TypeError, ValueError, OSError):
+            return True
+        if not reference_time.tzinfo:
+            reference_time = reference_time.astimezone()
+
+        age_seconds = (reference_time - event_time).total_seconds()
+        if age_seconds < 900:
+            return True
+
+        memory_text = event.content.lower()
+        return not any(term in memory_text for term in self.volatile_memory_terms)
+
     # TODO use events as passed from db, not in mem copy, pending (new not yet reated to), short_term (reacted to but not yet part of summary memory), memories (historc summaries of events)
     @observe()
     def generate_prompt(self, events: list[Event], projected_states: ProjectedStates, pending_events: list[Event], memories: list[MemoryEvent]) -> tuple[list[dict[str, str]], PromptUsageStats]:
@@ -4032,9 +4086,12 @@ class PromptGenerator:
         for event in (memories if focus.profile.include_memories else []):
             if memory_pieces_count > 5:
                 break
-            memory_pieces_count += 1
 
             if isinstance(event, MemoryEvent):
+                if not self.should_include_memory_for_prompt(event, reference_time, pending_events):
+                    continue
+                memory_pieces_count += 1
+
                 event_time = datetime.fromtimestamp(
                     cast(float,event.metadata.get('time_until', 0.0)),
                     tz=timezone.utc
