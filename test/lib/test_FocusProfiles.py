@@ -2,6 +2,7 @@ from src.lib.Event import ConversationEvent, GameEvent, ProjectedEvent, StatusEv
 from src.lib.FocusProfiles import (
     DEFAULT_FOCUS_PROFILES,
     EffectiveFocusProfile,
+    compact_tool_status,
     compact_travel_status,
     resolve_focus_profile,
     should_include_event,
@@ -101,13 +102,55 @@ def test_travel_compact_status_returns_structured_state_not_null() -> None:
             },
             "Location": {"StarSystem": "HIP 103687"},
             "NavInfo": {},
-            "ShipInfo": {"FuelMainCapacity": 32},
+            "ShipInfo": {"FuelMainCapacity": 32, "FuelReservoirCapacity": 0.6},
         }
     )
 
     assert status["TravelStatus"]["Location"]["StarSystem"] == "HIP 103687"
     assert status["CommanderShip"]["FsdCharging"] is True
-    assert status["CommanderShip"]["Fuel"]["FuelMain"] == 31.1
+    assert status["CommanderShip"]["Fuel"]["MainTank"]["CurrentTons"] == 31.1
+    assert status["CommanderShip"]["Fuel"]["MainTank"]["CapacityTons"] == 32
+    assert status["CommanderShip"]["Fuel"]["MainTank"]["PercentFull"] == 97.2
+    assert status["CommanderShip"]["Fuel"]["Reservoir"]["Display"] == "0.600 / 0.600 tons (100.0%)"
+
+
+def test_tool_compact_status_includes_destination_location_and_semantic_fuel() -> None:
+    status = compact_tool_status(
+        {
+            "CurrentStatus": {
+                "flags": {
+                    "Docked": False,
+                    "Landed": False,
+                    "LandingGearDown": True,
+                    "HardpointsDeployed": False,
+                    "CargoScoopDeployed": False,
+                    "LightsOn": False,
+                    "SilentRunning": False,
+                    "NightVision": False,
+                },
+                "flags2": {},
+                "GuiFocus": "NoFocus",
+                "Destination": {
+                    "System": 1733119873778,
+                    "Body": 1,
+                    "Name": "catgirl Air power V4N-NVK",
+                },
+                "Fuel": {"FuelMain": 31.4, "FuelReservoir": 0.458557},
+            },
+            "Location": {
+                "StarSystem": "HIP 103687",
+                "Station": "V4N-NVK",
+                "StationType": "FleetCarrier",
+            },
+            "ShipInfo": {"FuelMainCapacity": 32, "FuelReservoirCapacity": 0.6},
+        }
+    )
+
+    tool_state = status["ToolRelevantShipState"]
+    assert tool_state["Destination"]["Name"] == "catgirl Air power V4N-NVK"
+    assert tool_state["Location"]["StationType"] == "FleetCarrier"
+    assert tool_state["Fuel"]["Reservoir"]["CurrentTons"] == 0.458557
+    assert tool_state["Fuel"]["Reservoir"]["PercentFull"] == 76.4
 
 
 def test_shield_damage_still_selects_combat_focus_for_safety() -> None:

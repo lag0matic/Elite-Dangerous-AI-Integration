@@ -798,6 +798,57 @@ def _model_or_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _fuel_part(current: Any, capacity: Any) -> dict[str, Any]:
+    if current is None:
+        return {}
+
+    part: dict[str, Any] = {"CurrentTons": current}
+    if capacity not in (None, 0, 0.0, ""):
+        part["CapacityTons"] = capacity
+        try:
+            percent = (float(current) / float(capacity)) * 100
+            part["PercentFull"] = round(percent, 1)
+            part["Display"] = f"{float(current):.3f} / {float(capacity):.3f} tons ({round(percent, 1)}%)"
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+    return part
+
+
+def format_fuel_status(current_status: dict[str, Any], ship_info: dict[str, Any]) -> dict[str, Any]:
+    fuel = current_status.get("Fuel") if isinstance(current_status, dict) else None
+    if not isinstance(fuel, dict):
+        return {}
+
+    main_current = fuel.get("FuelMain")
+    reservoir_current = fuel.get("FuelReservoir")
+    main_capacity = ship_info.get("FuelMainCapacity") if isinstance(ship_info, dict) else None
+    reservoir_capacity = ship_info.get("FuelReservoirCapacity") if isinstance(ship_info, dict) else None
+
+    fuel_status: dict[str, Any] = {}
+    main = _fuel_part(main_current, main_capacity)
+    reservoir = _fuel_part(reservoir_current, reservoir_capacity)
+    if main:
+        fuel_status["MainTank"] = main
+    if reservoir:
+        fuel_status["Reservoir"] = reservoir
+
+    if main_current is not None and reservoir_current is not None:
+        try:
+            total_current = float(main_current) + float(reservoir_current)
+            total: dict[str, Any] = {"CurrentTons": round(total_current, 3)}
+            if main_capacity not in (None, 0, 0.0, "") and reservoir_capacity not in (None, 0, 0.0, ""):
+                total_capacity = float(main_capacity) + float(reservoir_capacity)
+                percent = (total_current / total_capacity) * 100
+                total["CapacityTons"] = round(total_capacity, 3)
+                total["PercentFull"] = round(percent, 1)
+                total["Display"] = f"{total_current:.3f} / {total_capacity:.3f} tons ({round(percent, 1)}%)"
+            fuel_status["TotalFuel"] = total
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
+    return fuel_status
+
+
 def compact_travel_status(projected_states: ProjectedStates) -> dict[str, Any]:
     current_status = get_state_dict(projected_states, "CurrentStatus")
     flags = current_status.get("flags", {}) if isinstance(current_status, dict) else {}
@@ -841,17 +892,7 @@ def compact_travel_status(projected_states: ProjectedStates) -> dict[str, Any]:
         if target.get("StarSystem"):
             route["NextJumpTarget"] = target.get("StarSystem")
 
-    fuel = current_status.get("Fuel") if isinstance(current_status, dict) else None
-    fuel_status: dict[str, Any] = {}
-    if isinstance(fuel, dict):
-        fuel_status["FuelMain"] = fuel.get("FuelMain")
-        fuel_status["FuelReservoir"] = fuel.get("FuelReservoir")
-    fuel_status["FuelMainCapacity"] = ship_info.get("FuelMainCapacity")
-    fuel_status["FuelReservoirCapacity"] = ship_info.get("FuelReservoirCapacity")
-    fuel_status = {
-        key: value for key, value in fuel_status.items()
-        if value is not None
-    }
+    fuel_status = format_fuel_status(current_status, ship_info)
 
     return {
         "TravelStatus": {
@@ -881,6 +922,23 @@ def compact_tool_status(projected_states: ProjectedStates) -> dict[str, Any]:
     current_status = get_state_dict(projected_states, "CurrentStatus")
     flags = current_status.get("flags", {}) if isinstance(current_status, dict) else {}
     flags2 = current_status.get("flags2", {}) if isinstance(current_status, dict) else {}
+    location_info = get_state_dict(projected_states, "Location")
+    ship_info = get_state_dict(projected_states, "ShipInfo")
+    location_keys = (
+        "StarSystem",
+        "StationName",
+        "Station",
+        "StationType",
+        "Body",
+        "BodyType",
+        "Docked",
+        "Landed",
+    )
+    location = {
+        key: location_info.get(key)
+        for key in location_keys
+        if isinstance(location_info, dict) and location_info.get(key) not in (None, "", [])
+    }
 
     return {
         "ToolRelevantShipState": {
@@ -894,5 +952,8 @@ def compact_tool_status(projected_states: ProjectedStates) -> dict[str, Any]:
             "NightVision": flags.get("NightVision"),
             "GuiFocus": current_status.get("GuiFocus") if isinstance(current_status, dict) else None,
             "OnFoot": flags2.get("OnFoot") if isinstance(flags2, dict) else None,
+            "Destination": current_status.get("Destination") if isinstance(current_status, dict) else None,
+            "Location": location or None,
+            "Fuel": format_fuel_status(current_status, ship_info) or None,
         }
     }

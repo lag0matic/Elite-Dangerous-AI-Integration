@@ -58,6 +58,7 @@ from .FocusProfiles import (
     compact_tool_status,
     compact_travel_status,
     event_name,
+    format_fuel_status,
     resolve_focus_profile,
     should_include_event,
 )
@@ -3215,21 +3216,7 @@ class PromptGenerator:
         fighters = ship_info.get('Fighters', [])
 
         if active_mode == 'Main ship' and status_fuel:
-            fuel_main = status_fuel.get('FuelMain')
-            fuel_reservoir = status_fuel.get('FuelReservoir')
-            fuel_main_capacity = ship_info.get('FuelMainCapacity')
-            fuel_reservoir_capacity = ship_info.get('FuelReservoirCapacity')
-            fuel_status = {}
-            if fuel_main is not None:
-                fuel_status["main_tons"] = fuel_main
-                fuel_status["main_units"] = "tons"
-                if fuel_main_capacity:
-                    fuel_status["main_capacity_tons"] = fuel_main_capacity
-                    fuel_status["main_percent"] = round((float(fuel_main) / float(fuel_main_capacity)) * 100, 1)
-            if fuel_reservoir is not None:
-                fuel_status["reservoir_tons"] = fuel_reservoir
-                if fuel_reservoir_capacity:
-                    fuel_status["reservoir_capacity_tons"] = fuel_reservoir_capacity
+            fuel_status = format_fuel_status(current_status, ship_info)
             if fuel_status:
                 vehicle_status["fuel"] = fuel_status
         
