@@ -21,6 +21,9 @@ Changes in the game world can trigger events that the AI can respond to. For exa
 
 For a more in-depth guide on reactions and event triggers, see the [Reactions](./25_reactions.md) page.
 
+Focus modes can further narrow what the AI sees during activities such as combat,
+mining, travel, commerce, or quiet play. For details, see the [Focus Modes](./26_focus_modes.md) page.
+
 ## Keyboard Bindings
 
 Certain keyboard bindings are required for the AI to trigger game actions. In the **Actions** tab of the settings, the UI will inform you if actions are unassigned, conflicting, or unsupported. Actions can be toggled on and off to disable unwanted ones, such as ejecting all cargo.
