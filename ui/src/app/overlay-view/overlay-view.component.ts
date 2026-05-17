@@ -1,7 +1,7 @@
 import { Component, OnDestroy, ElementRef, ViewChild, AfterViewInit } from "@angular/core";
 import { DomSanitizer, SafeHtml } from "@angular/platform-browser";
-import { TauriService } from "../services/tauri.service";
-import { Subscription, combineLatest } from "rxjs";
+import { BaseMessage, TauriService } from "../services/tauri.service";
+import { Subscription, combineLatest, filter } from "rxjs";
 import { CommonModule } from "@angular/common";
 import {PngTuberService} from "../services/pngtuber.service";
 import {ChatMessage, ChatService} from "../services/chat.service";
@@ -10,6 +10,14 @@ import {CharacterService} from "../services/character.service";
 import {Config, ConfigService} from "../services/config.service";
 import {GenUiRenderComponent} from "../components/gen-ui-render/gen-ui-render.component";
 import { EventService } from "../services/event.service";
+
+interface FocusProfileMessage extends BaseMessage {
+  type: "focus_profile";
+  manual_profile: string;
+  effective_profile: string;
+  automatic: boolean;
+  reason?: string;
+}
 
 @Component({
   selector: "app-overlay-view",
@@ -47,6 +55,10 @@ export class OverlayViewComponent implements OnDestroy, AfterViewInit {
   avatarShow: boolean = true;
   chatShow: boolean = true;
   isStreamerWindow: boolean = false;
+  focusManualProfile: string = "normal";
+  focusEffectiveProfile: string = "normal";
+  focusAutomatic: boolean = false;
+  focusReason: string = "";
   private isInitialized: boolean = false;
 
   constructor(
@@ -115,6 +127,17 @@ export class OverlayViewComponent implements OnDestroy, AfterViewInit {
         if (message.event.kind === "assistant_completed") {
           this.clearScriptedAvatar();
         }
+      }),
+    );
+
+    this.subscriptions.push(
+      tauriService.output$.pipe(
+        filter((message): message is FocusProfileMessage => message.type === "focus_profile"),
+      ).subscribe((message) => {
+        this.focusManualProfile = message.manual_profile || "normal";
+        this.focusEffectiveProfile = message.effective_profile || this.focusManualProfile;
+        this.focusAutomatic = Boolean(message.automatic);
+        this.focusReason = message.reason || "";
       }),
     );
 
@@ -214,6 +237,32 @@ export class OverlayViewComponent implements OnDestroy, AfterViewInit {
   /** SVG avatars are embedded so internal style state selectors (e.g. `.listening .eye-base`) apply. */
   get avatarUsesInlineSvg(): boolean {
     return this.effectiveAvatarMimePrimary() === "image/svg+xml";
+  }
+
+  get focusDisplayLabel(): string {
+    return this.formatFocusProfile(this.focusEffectiveProfile);
+  }
+
+  private formatFocusProfile(profile: string): string {
+    switch (profile) {
+      case "combat-focus":
+        return "Combat Focus";
+      case "travel-docking-exploration":
+        return "Travel / Docking / Exploration";
+      case "full-context":
+        return "Full Context";
+      case "tool-result":
+        return "Tool Result";
+      case "commerce":
+        return "Commerce";
+      case "mining":
+        return "Mining";
+      case "quiet":
+        return "Quiet";
+      case "normal":
+      default:
+        return "Normal";
+    }
   }
 
   /** SVG defines listening | speaking | thinking | acting — map idle to listening. */

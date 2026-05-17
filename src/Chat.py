@@ -346,6 +346,12 @@ class Chat:
             disabled_game_events=disabled_events,
             focus_profile_reactions=self.character.get("focus_profile_reactions", {}),
         )
+        self.prompt_generator.emit_focus_profile_state(
+            manual_profile=self.prompt_generator.get_focus_profile(),
+            effective_profile=self.prompt_generator.get_focus_profile(),
+            automatic=False,
+            reason="startup",
+        )
 
         log("debug", "Initializing event manager...")
         self.event_manager = EventManager(
@@ -408,7 +414,8 @@ class Chat:
         )
         if event.kind == "assistant":
             event = cast(ConversationEvent, event)
-            show_chat_message("covas", event.content)
+            display_name = self.character.get("name") or "COVAS"
+            show_chat_message("covas", event.content, display_name=display_name)
         if event.kind == "user":
             event = cast(ConversationEvent, event)
             show_chat_message("cmdr", event.content)
@@ -1072,6 +1079,12 @@ def read_stdin(chat: Chat):
                     emit_message("quest_progress_reset", success=False, message=str(e))
             if data.get("type") == "init_overlay":
                 emit_message("running_config", config=config)
+                chat.prompt_generator.emit_focus_profile_state(
+                    manual_profile=chat.prompt_generator.get_focus_profile(),
+                    effective_profile=chat.prompt_generator.get_focus_profile(),
+                    automatic=False,
+                    reason="overlay init",
+                )
             if data.get("type") == "web_search":
                 query = data.get("query", "")
                 if query:

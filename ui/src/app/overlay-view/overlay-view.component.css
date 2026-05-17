@@ -160,6 +160,58 @@
     visibility 0s linear 0.08s;
 }
 
+.overlay-focus-indicator {
+  align-self: center;
+  box-sizing: border-box;
+  max-width: calc(250px * var(--avatar-scale, 1));
+  min-width: 150px;
+  margin: -6px auto 8px;
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(118, 213, 255, 0.45);
+  border-radius: 4px;
+  background: rgba(5, 12, 18, 0.66);
+  box-shadow:
+    0 0 10px rgba(65, 182, 255, 0.24),
+    inset 0 0 12px rgba(65, 182, 255, 0.08);
+  color: #d9f5ff;
+  font-family: "Roboto Mono", monospace;
+  font-size: 11px;
+  line-height: 1.15;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  text-shadow: 0 0 6px rgba(65, 182, 255, 0.7);
+}
+
+.overlay-focus-indicator.automatic {
+  border-color: rgba(255, 170, 60, 0.62);
+  color: #ffe3ba;
+  box-shadow:
+    0 0 10px rgba(255, 170, 60, 0.26),
+    inset 0 0 12px rgba(255, 170, 60, 0.1);
+  text-shadow: 0 0 6px rgba(255, 170, 60, 0.72);
+}
+
+.focus-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-auto {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 170, 60, 0.18);
+  color: #ffd18c;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
 
 .overlay-chat {
     grid-area: content;

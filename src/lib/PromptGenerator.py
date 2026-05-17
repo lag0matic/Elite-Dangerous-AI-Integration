@@ -49,6 +49,7 @@ from .Event import (
     QuestEvent,
 )
 from .Logger import log, observe, PromptUsageStats
+from .UI import emit_message
 from .FocusProfiles import (
     DEFAULT_FOCUS_PROFILES,
     FocusProfileName,
@@ -199,10 +200,29 @@ class PromptGenerator:
             valid = ", ".join(name for name in DEFAULT_FOCUS_PROFILES if name != "tool-result")
             raise ValueError(f"Unknown focus profile '{profile_name}'. Valid profiles: {valid}")
         self.active_focus_profile = resolved
+        self.emit_focus_profile_state(resolved, resolved, False, "manual")
         return resolved
 
     def get_focus_profile(self) -> FocusProfileName:
         return self.active_focus_profile
+
+    def emit_focus_profile_state(
+        self,
+        manual_profile: str | None = None,
+        effective_profile: str | None = None,
+        automatic: bool = False,
+        reason: str = "",
+    ) -> None:
+        try:
+            emit_message(
+                "focus_profile",
+                manual_profile=manual_profile or self.active_focus_profile,
+                effective_profile=effective_profile or manual_profile or self.active_focus_profile,
+                automatic=automatic,
+                reason=reason,
+            )
+        except Exception:
+            pass
 
     def get_focus_event_reaction_state(self, event_type: str, profile_name: str | None = None) -> str | None:
         profile_key = profile_name or self.active_focus_profile
@@ -3879,6 +3899,19 @@ class PromptGenerator:
         # Initialize usage stats
         usage_stats = PromptUsageStats()
         focus = resolve_focus_profile(projected_states, pending_events, self.active_focus_profile)
+        display_effective_profile = focus.profile.name
+        display_automatic = focus.automatic
+        display_reason = focus.reason
+        if focus.profile.name == "tool-result" and self.is_focus_tool_result_pending(pending_events):
+            display_effective_profile = self.active_focus_profile
+            display_automatic = False
+            display_reason = "focus tool result"
+        self.emit_focus_profile_state(
+            self.active_focus_profile,
+            display_effective_profile,
+            display_automatic,
+            display_reason,
+        )
         filtered_events: dict[str, int] = {}
         included_event_counts: dict[str, int] = {}
 

@@ -10,7 +10,7 @@
      [class.position-left]="avatarPosition === 'left'" 
      [class.position-right]="avatarPosition === 'right'"
      *ngIf="avatarShow || chatShow">
-    <div class="overlay-character" [ngClass]="action">
+    <div class="overlay-character" [ngClass]="action" [style.--avatar-scale]="avatarScale">
         @if (avatarShow) {
           @if (avatarUsesInlineSvg) {
             <div class="overlay-svg-tuber"
@@ -24,6 +24,16 @@
                  [style.width.px]="avatarBaseWidth * avatarScale"
                  #pngtuberElement></div>
           }
+        }
+        @if (avatarShow) {
+          <div class="overlay-focus-indicator"
+               [class.automatic]="focusAutomatic"
+               [title]="focusReason">
+            <span class="focus-label">{{ focusDisplayLabel }}</span>
+            @if (focusAutomatic) {
+              <span class="focus-auto">AUTO</span>
+            }
+          </div>
         }
         <div class="overlay-chat" *ngIf="chatShow">
 <!--            <p class="ready-text" *ngIf="runMode=='starting'">System preparing...</p>-->
