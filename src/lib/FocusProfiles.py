@@ -125,7 +125,6 @@ DEFAULT_FOCUS_PROFILES: dict[FocusProfileName, FocusProfile] = {
             "Cargo",
             "CargoScoopDeployed",
             "CargoScoopRetracted",
-            "ReservoirReplenished",
             "RememberLimpets",
             "ReceiveText",
             "UnderAttack",
@@ -213,6 +212,7 @@ DEFAULT_FOCUS_PROFILES: dict[FocusProfileName, FocusProfile] = {
             "NavRouteClear",
             "OutpostDiscovered",
             "ReceiveText",
+            "ReservoirReplenished",
             "ResourceExtractionDiscovered",
             "SAAScanComplete",
             "SAASignalsFound",
@@ -545,7 +545,6 @@ def resolve_focus_profile(
         "CollectCargo",
         "CargoScoopDeployed",
         "CargoScoopRetracted",
-        "ReservoirReplenished",
         "RememberLimpets",
     }
 
@@ -589,6 +588,7 @@ def resolve_focus_profile(
         "NavBeaconScan",
         "NavRoute",
         "NavRouteClear",
+        "ReservoirReplenished",
         "SAAScanComplete",
         "SAASignalsFound",
         "Scan",

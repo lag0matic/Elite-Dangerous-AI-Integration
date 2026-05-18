@@ -179,6 +179,38 @@ def test_manual_full_context_bypasses_automatic_mining_focus() -> None:
     assert focus.reason == "manual full-context"
 
 
+def test_reservoir_replenished_selects_travel_not_mining() -> None:
+    focus = resolve_focus_profile(
+        projected_states={},
+        pending_events=[
+            game_event(
+                "ReservoirReplenished",
+                processed_at=1.0,
+                FuelMain=88.447075,
+                FuelReservoir=1.14,
+            ),
+        ],
+        manual_profile_name="travel-docking-exploration",
+    )
+
+    assert focus.profile.name == "travel-docking-exploration"
+    assert focus.reason == "ReservoirReplenished"
+
+
+def test_mining_focus_does_not_include_reservoir_replenished_by_default() -> None:
+    focus = EffectiveFocusProfile(
+        DEFAULT_FOCUS_PROFILES["mining"],
+        "manual/default",
+        False,
+    )
+
+    assert not should_include_event(
+        game_event("ReservoirReplenished"),
+        focus,
+        is_pending=True,
+    )
+
+
 def test_direct_commander_speech_uses_manual_focus() -> None:
     focus = resolve_focus_profile(
         projected_states={},
