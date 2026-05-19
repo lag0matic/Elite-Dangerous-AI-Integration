@@ -197,6 +197,30 @@ def test_reservoir_replenished_selects_travel_not_mining() -> None:
     assert focus.reason == "ReservoirReplenished"
 
 
+def test_arrival_outranks_older_fsd_charging_in_travel_focus() -> None:
+    focus = resolve_focus_profile(
+        projected_states={},
+        pending_events=[
+            status_event("FsdCharging", processed_at=1.0),
+            game_event(
+                "StartJump",
+                processed_at=2.0,
+                JumpType="Hyperspace",
+                StarSystem="Pyraleau XA-L d9-53",
+            ),
+            game_event(
+                "FSDJump",
+                processed_at=3.0,
+                StarSystem="Pyraleau XA-L d9-53",
+            ),
+        ],
+        manual_profile_name="travel-docking-exploration",
+    )
+
+    assert focus.profile.name == "travel-docking-exploration"
+    assert focus.reason == "FSDJump"
+
+
 def test_mining_focus_does_not_include_reservoir_replenished_by_default() -> None:
     focus = EffectiveFocusProfile(
         DEFAULT_FOCUS_PROFILES["mining"],

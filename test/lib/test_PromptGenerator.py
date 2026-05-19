@@ -74,3 +74,20 @@ def test_old_non_operational_memory_is_available_for_event_replies() -> None:
         reference_time,
         pending_events=[GameEvent(content={"event": "LoadGame", "timestamp": "2026-05-17T13:37:00Z"}, historic=False)],
     )
+
+
+def test_fsd_jump_supersedes_pending_charge_events() -> None:
+    generator = prompt_generator()
+
+    assert generator.is_superseded_pending_event(
+        GameEvent(content={"event": "StartJump"}, historic=False),
+        pending_event_names={"StartJump", "FSDJump"},
+    )
+    assert generator.is_superseded_pending_event(
+        GameEvent(content={"event": "FsdCharging"}, historic=False),
+        pending_event_names={"FsdCharging", "FSDJump"},
+    )
+    assert not generator.is_superseded_pending_event(
+        GameEvent(content={"event": "FSDJump"}, historic=False),
+        pending_event_names={"FsdCharging", "FSDJump"},
+    )

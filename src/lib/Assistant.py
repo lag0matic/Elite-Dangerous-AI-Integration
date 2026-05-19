@@ -36,7 +36,7 @@ from threading import Thread
 from .actions.Actions import set_speed, fire_weapons, get_visuals
 from .Projections import get_state_dict, ProjectedStates
 from .QuestCatalogManager import remove_orphaned_quest_states
-from .FocusProfiles import resolve_focus_profile
+from .FocusProfiles import event_name, resolve_focus_profile
 
 FALLBACK_STAGE_ID = "__fallback__"
 
@@ -840,6 +840,42 @@ class Assistant:
             return
         thread = Thread(target=self.reply_thread, args=(projected_states,), daemon=True)
         thread.start()
+
+    def response_was_superseded(
+        self,
+        reasons: list[str],
+        max_conversation_processed: float,
+    ) -> bool:
+        if "user" in reasons or "tool" in reasons:
+            return False
+
+        stale_travel_reasons = {"FsdCharging", "StartJump", "status"}
+        if not stale_travel_reasons.intersection(reasons):
+            return False
+
+        superseding_events = {
+            "FSDJump",
+            "SupercruiseDestinationDrop",
+            "SupercruiseExit",
+            "Docked",
+            "DockingGranted",
+            "DockingDenied",
+        }
+        latest_events = self.event_manager.get_short_term_memory(50)
+        for event in latest_events:
+            if (getattr(event, "processed_at", 0.0) or 0.0) <= max_conversation_processed:
+                continue
+            if getattr(event, "responded_at", None) is not None:
+                continue
+            if event_name(event) in superseding_events:
+                log(
+                    "debug",
+                    "Dropping superseded assistant reply",
+                    {"reasons": reasons, "superseded_by": event_name(event)},
+                )
+                return True
+
+        return False
         
     @observe()
     def reply_thread(self, projected_states: ProjectedStates):
@@ -928,6 +964,10 @@ class Assistant:
                     return
 
             if response_text and not response_actions:
+                if self.response_was_superseded(reasons, max_conversation_processed):
+                    self.reply_pending = True
+                    return
+
                 self.event_manager.add_assistant_speaking()
                 self.tts.say(
                     response_text,

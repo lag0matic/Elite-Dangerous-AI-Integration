@@ -425,6 +425,33 @@ def event_name(event: Event) -> str:
     return str(getattr(event, "kind", type(event).__name__))
 
 
+def _best_event_reason_by_priority(
+    events: list[Event],
+    priority: tuple[str, ...],
+) -> str | None:
+    """Return the best event reason, preferring higher priority and newer events."""
+    priority_index = {name: index for index, name in enumerate(priority)}
+    best_name: str | None = None
+    best_score: tuple[int, float] | None = None
+
+    for event in events:
+        content = _event_content(event)
+        if not content:
+            continue
+
+        current_event_name = str(content.get("event", ""))
+        if current_event_name not in priority_index:
+            continue
+
+        processed_at = getattr(event, "processed_at", 0.0) or 0.0
+        score = (priority_index[current_event_name], -processed_at)
+        if best_score is None or score < best_score:
+            best_score = score
+            best_name = current_event_name
+
+    return best_name
+
+
 def resolve_focus_profile(
     projected_states: ProjectedStates,
     pending_events: list[Event],
@@ -613,6 +640,58 @@ def resolve_focus_profile(
         "LowFuelWarning",
         "LowFuelWarningCleared",
     }
+
+    travel_reason = _best_event_reason_by_priority(
+        recent_pending_events,
+        (
+            "FSDJump",
+            "SupercruiseDestinationDrop",
+            "SupercruiseExit",
+            "DockingGranted",
+            "Docked",
+            "DockingDenied",
+            "DockingTimeout",
+            "Undocked",
+            "CarrierJump",
+            "JetConeBoost",
+            "HighGravityWarning",
+            "FsdMassLockEscaped",
+            "LowFuelWarning",
+            "FsdCharging",
+            "StartJump",
+            "FuelScoop",
+            "FuelScoopStarted",
+            "FuelScoopEnded",
+            "FSDTarget",
+            "NavRoute",
+            "NavRouteClear",
+            "ReservoirReplenished",
+            "DiscoveryScan",
+            "FSSDiscoveryScan",
+            "FSSSignalDiscovered",
+            "FSSAllBodiesFound",
+            "FSSBodySignals",
+            "SAAScanComplete",
+            "SAASignalsFound",
+            "Scan",
+            "Location",
+            "SupercruiseEntry",
+            "DockingRequested",
+            "DockingCancelled",
+            "ApproachBody",
+            "ApproachSettlement",
+            "CodexEntry",
+            "HighValueLandmarksBody",
+            "HGECandidateFound",
+            "NavBeaconScan",
+        ),
+    )
+    if travel_reason:
+        return EffectiveFocusProfile(
+            DEFAULT_FOCUS_PROFILES["travel-docking-exploration"],
+            travel_reason,
+            True,
+        )
 
     for event in recent_pending_events:
         content = _event_content(event)

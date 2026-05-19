@@ -3897,6 +3897,19 @@ class PromptGenerator:
                     return True
         return False
 
+    def is_superseded_pending_event(
+        self,
+        event: Event,
+        pending_event_names: set[str],
+    ) -> bool:
+        current_event_name = event_name(event)
+        if "FSDJump" in pending_event_names and current_event_name in {
+            "FsdCharging",
+            "StartJump",
+        }:
+            return True
+        return False
+
     def should_include_memory_for_prompt(
         self,
         event: MemoryEvent,
@@ -3955,6 +3968,7 @@ class PromptGenerator:
         )
         filtered_events: dict[str, int] = {}
         included_event_counts: dict[str, int] = {}
+        pending_event_names = {event_name(event) for event in pending_events}
 
         for event in events[::-1]:
             if len(conversational_pieces) >= 50:
@@ -3962,6 +3976,10 @@ class PromptGenerator:
 
             is_pending = event in pending_events
             current_event_name = event_name(event)
+            if is_pending and self.is_superseded_pending_event(event, pending_event_names):
+                filtered_events[current_event_name] = filtered_events.get(current_event_name, 0) + 1
+                continue
+
             if not self.should_include_event_for_focus(event, focus, is_pending):
                 filtered_events[current_event_name] = filtered_events.get(current_event_name, 0) + 1
                 continue
