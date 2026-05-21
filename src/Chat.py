@@ -381,6 +381,19 @@ class Chat:
 
         self.previous_states = {}
 
+    def get_active_character_display_name(self) -> str:
+        active_index = self.config.get("active_character_index", -1)
+        characters = self.config.get("characters", [])
+        if (
+            isinstance(active_index, int)
+            and 0 <= active_index < len(characters)
+            and isinstance(characters[active_index], dict)
+        ):
+            name = characters[active_index].get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        return "COVAS"
+
     def on_event(self, event: Event, projected_states: dict[str, Any]):
         for key, value in projected_states.items():
             if self.previous_states.get(key, None) != value:
@@ -399,7 +412,11 @@ class Chat:
         )
         if event.kind == "assistant":
             event = cast(ConversationEvent, event)
-            show_chat_message("covas", event.content)
+            show_chat_message(
+                "covas",
+                event.content,
+                display_name=self.get_active_character_display_name(),
+            )
         if event.kind == "user":
             event = cast(ConversationEvent, event)
             show_chat_message("cmdr", event.content)
