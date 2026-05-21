@@ -90,6 +90,8 @@ export interface Config {
     llm_api_key: string;
     llm_endpoint: string;
     llm_temperature: number;
+    llm_frequency_penalty: number;
+    llm_presence_penalty: number;
     agent_llm_provider:
         | "openai"
         | "openrouter"
@@ -101,6 +103,8 @@ export interface Config {
     agent_llm_api_key: string;
     agent_llm_endpoint: string;
     agent_llm_temperature: number;
+    agent_llm_frequency_penalty: number;
+    agent_llm_presence_penalty: number;
     agent_llm_max_tries: number;
     vision_provider: "openai" | "google-ai-studio" | "custom" | "none" | "local-ai-server";
     vision_model_name: string;

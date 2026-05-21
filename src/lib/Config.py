@@ -812,12 +812,16 @@ class Config(TypedDict):
     llm_model_name: str
     llm_reasoning_effort: Literal['default', 'none', 'minimal', 'low', 'medium', 'high'] | None
     llm_temperature: float
+    llm_frequency_penalty: float
+    llm_presence_penalty: float
     agent_llm_provider: Literal['openai', 'openrouter','google-ai-studio', 'custom', 'local-ai-server']
     agent_llm_model_name: str
     agent_llm_reasoning_effort: Literal['default', 'none', 'minimal', 'low', 'medium', 'high'] | None
     agent_llm_endpoint: str
     agent_llm_api_key: str
     agent_llm_temperature: float
+    agent_llm_frequency_penalty: float
+    agent_llm_presence_penalty: float
     agent_llm_max_tries: int
     vision_provider: Literal['openai', 'google-ai-studio', 'custom', 'none', 'local-ai-server']
     vision_model_name: str
@@ -1232,6 +1236,13 @@ def migrate(data: dict) -> dict:
             data['overlay_mode'] = 'both'
         data.pop('overlay_vr_streamer_mode', None)
 
+    if data['config_version'] < 18:
+        data['config_version'] = 18
+        data.setdefault('llm_frequency_penalty', 0.5)
+        data.setdefault('llm_presence_penalty', 0.1)
+        data.setdefault('agent_llm_frequency_penalty', 0.0)
+        data.setdefault('agent_llm_presence_penalty', 0.0)
+
     return data
 
 
@@ -1334,7 +1345,7 @@ def getDefaultCharacter(config: Config) -> Character:
 
 def load_config() -> Config:
     defaults: Config = {
-        'config_version': 17,
+        'config_version': 18,
         'commander_name': "",
         'characters': [],
         'active_character_index': 0,  # -1 means using the default legacy character
@@ -1369,12 +1380,16 @@ def load_config() -> Config:
         'llm_endpoint': "https://api.openai.com/v1",
         'llm_api_key': "",
         'llm_temperature': 1.0,
+        'llm_frequency_penalty': 0.5,
+        'llm_presence_penalty': 0.1,
         'agent_llm_provider': "openai",
         'agent_llm_model_name': "gpt-5.4-mini",
         'agent_llm_reasoning_effort': 'low',
         'agent_llm_endpoint': "https://api.openai.com/v1",
         'agent_llm_api_key': "",
         'agent_llm_temperature': 1.0,
+        'agent_llm_frequency_penalty': 0.0,
+        'agent_llm_presence_penalty': 0.0,
         'agent_llm_max_tries': 7,
         'ptt_key': '',
         'ptt_key_secondary': '',

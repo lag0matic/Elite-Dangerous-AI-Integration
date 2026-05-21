@@ -202,11 +202,25 @@ def _get_reasoning_tokens(usage: Any) -> int | None:
     return None
 
 class OpenAILLMModel(LLMModel):
-    def __init__(self, base_url: str, api_key: str, model_name: str, temperature: float, reasoning_effort: Optional[str] = None, extra_body: Optional[dict] = None, extra_headers: Optional[dict] = None, provider_name: str | None = None):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        temperature: float,
+        frequency_penalty: float = 0.0,
+        presence_penalty: float = 0.0,
+        reasoning_effort: Optional[str] = None,
+        extra_body: Optional[dict] = None,
+        extra_headers: Optional[dict] = None,
+        provider_name: str | None = None,
+    ):
         super().__init__(model_name, provider_name=provider_name)
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.base_url = base_url
         self.temperature = temperature
+        self.frequency_penalty = frequency_penalty
+        self.presence_penalty = presence_penalty
         self.reasoning_effort = reasoning_effort
         self.extra_body = extra_body or {}
         self.extra_headers = extra_headers or {}
@@ -244,6 +258,10 @@ class OpenAILLMModel(LLMModel):
             **self.extra_body,
             **kwargs
         }
+        if self.frequency_penalty:
+            params["frequency_penalty"] = self.frequency_penalty
+        if self.presence_penalty:
+            params["presence_penalty"] = self.presence_penalty
         if tools:
             # LM Studio's embedded FunctionGemma template expects every schema node
             # to have a direct scalar `type`. Normalize tool schemas defensively so
@@ -349,11 +367,25 @@ class OpenAILLMModel(LLMModel):
             raise e
 
 class OpenAIResponsesLLMModel(LLMModel):
-    def __init__(self, base_url: str, api_key: str, model_name: str, temperature: float, reasoning_effort: Optional[str] = None, extra_body: Optional[dict] = None, extra_headers: Optional[dict] = None, provider_name: str | None = None):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        temperature: float,
+        frequency_penalty: float = 0.0,
+        presence_penalty: float = 0.0,
+        reasoning_effort: Optional[str] = None,
+        extra_body: Optional[dict] = None,
+        extra_headers: Optional[dict] = None,
+        provider_name: str | None = None,
+    ):
         super().__init__(model_name, provider_name=provider_name)
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.base_url = base_url
         self.temperature = temperature
+        self.frequency_penalty = frequency_penalty
+        self.presence_penalty = presence_penalty
         self.reasoning_effort = reasoning_effort
         self.extra_body = extra_body or {}
         self.extra_headers = extra_headers or {}
@@ -563,7 +595,6 @@ class OpenAIResponsesLLMModel(LLMModel):
             "input": self._convert_messages(messages),
             "temperature": self.temperature,
         }
-
         if self.model_name in ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4', 'gpt-5.1']:
             params["text"] = {"verbosity": "low"}
 
@@ -904,6 +935,8 @@ def create_llm_model(provider: str, config: dict, prefix: str = "llm") -> LLMMod
     api_key = str(config.get("api_key") if config.get(f"{prefix}_api_key", "") == "" else config.get(f"{prefix}_api_key"))
     model_name = str(config.get(f"{prefix}_model_name", ""))
     temperature = float(config.get(f"{prefix}_temperature", 1.0))
+    frequency_penalty = float(config.get(f"{prefix}_frequency_penalty", 0.0))
+    presence_penalty = float(config.get(f"{prefix}_presence_penalty", 0.0))
     reasoning_effort = config.get(f"{prefix}_reasoning_effort", None)
     if reasoning_effort:
         reasoning_effort = str(reasoning_effort)
@@ -927,6 +960,8 @@ def create_llm_model(provider: str, config: dict, prefix: str = "llm") -> LLMMod
             api_key=api_key,
             model_name=model_name,
             temperature=temperature,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
             extra_headers=extra_headers,
@@ -938,6 +973,8 @@ def create_llm_model(provider: str, config: dict, prefix: str = "llm") -> LLMMod
         api_key=api_key,
         model_name=model_name,
         temperature=temperature,
+        frequency_penalty=frequency_penalty,
+        presence_penalty=presence_penalty,
         reasoning_effort=reasoning_effort,
         extra_body=extra_body,
         extra_headers=extra_headers,

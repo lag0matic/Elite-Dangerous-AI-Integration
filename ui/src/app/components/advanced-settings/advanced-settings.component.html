@@ -204,6 +204,19 @@
                 </mat-slide-toggle>
             </label>
         }
+        @if (config.llm_provider !== "openai" && !isPluginProvider(config.llm_provider)) {
+            <mat-form-field>
+                <mat-label>LLM Frequency Penalty</mat-label>
+                <input matInput type="number" [(ngModel)]="config.llm_frequency_penalty"
+                        (ngModelChange)="onConfigChange({llm_frequency_penalty: $event})" min="0" max="2" step="0.01">
+            </mat-form-field>
+
+            <mat-form-field>
+                <mat-label>LLM Presence Penalty</mat-label>
+                <input matInput type="number" [(ngModel)]="config.llm_presence_penalty"
+                        (ngModelChange)="onConfigChange({llm_presence_penalty: $event})" min="0" max="2" step="0.01">
+            </mat-form-field>
+        }
         @if (isPluginProvider(config.llm_provider)) {
             @if (getSelectedPluginProvider(config.llm_provider, 'llm'); as provider) {
                 @for (grid of provider.settings_config; track grid.key) {
@@ -400,6 +413,19 @@
                 <mat-label>Override Agent LLM API Key</mat-label>
                 <input matInput type="password" [(ngModel)]="config.agent_llm_api_key"
                         (ngModelChange)="onConfigChange({agent_llm_api_key: $event})">
+            </mat-form-field>
+        }
+        @if (config.agent_llm_provider !== "openai" && !isPluginProvider(config.agent_llm_provider)) {
+            <mat-form-field>
+                <mat-label>Agent LLM Frequency Penalty</mat-label>
+                <input matInput type="number" [(ngModel)]="config.agent_llm_frequency_penalty"
+                        (ngModelChange)="onConfigChange({agent_llm_frequency_penalty: $event})" min="0" max="2" step="0.01">
+            </mat-form-field>
+
+            <mat-form-field>
+                <mat-label>Agent LLM Presence Penalty</mat-label>
+                <input matInput type="number" [(ngModel)]="config.agent_llm_presence_penalty"
+                        (ngModelChange)="onConfigChange({agent_llm_presence_penalty: $event})" min="0" max="2" step="0.01">
             </mat-form-field>
         }
         @if (isPluginProvider(config.agent_llm_provider)) {
