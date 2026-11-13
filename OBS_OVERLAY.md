@@ -1,4 +1,6 @@
-# OBS Overlay Branch
+# Seated Recenter and OBS Browser Source
+
+Branch: `codex/seated-recenter-obs-browser-source`.
 
 Based on `codex/seated-vr-anchor`. The recenter and electron-vr branches are unchanged.
 
