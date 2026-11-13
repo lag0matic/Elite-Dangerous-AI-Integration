@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { updateExistingVrOverlay } from '../../electron/vr-overlay-updates.js';
 
-const options = { mode: 'both', screenId: 2, vrAnchor: 'seated', vrSizeMeters: 1.5,
+const options = { mode: 'vr', screenId: 2, vrAnchor: 'seated', vrSizeMeters: 1.5,
   vrCurvature: 0.32, vrHorizontalOffset: -0.2, vrVerticalOffset: 0.15,
   vrDistanceOffset: -0.42, vrTiltDegrees: 5, vrYawDegrees: 0 };
 test('offset edits update the existing controller without replacing its anchor', () => {
@@ -26,7 +26,7 @@ test('native curvature and size are changed in place', () => {
   assert.deepEqual(calls, [['size', 2], ['curve', 0.4]]);
 });
 test('window or backend changes still require normal reconstruction', () => {
-  for (const change of [{ mode: 'vr' }, { screenId: 3 }]) {
+  for (const change of [{ mode: 'desktop' }, { screenId: 3 }]) {
     assert.equal(updateExistingVrOverlay({ controller: {} }, options, { ...options, ...change }), false);
   }
   assert.equal(updateExistingVrOverlay({ controller: {}, cleanedUp: true }, options, options), false);

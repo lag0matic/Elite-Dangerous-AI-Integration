@@ -339,7 +339,6 @@ export class MainViewComponent implements OnInit, OnDestroy {
             if(
                 this.config
                 && this.config.overlay_mode !== "disabled"
-                && (this.config.overlay_show_avatar || this.config.overlay_show_chat || this.config.overlay_show_hud)
             ) {
                 await this.createOverlay();
             }
@@ -365,10 +364,6 @@ export class MainViewComponent implements OnInit, OnDestroy {
 
     async createOverlay(): Promise<void> {
         try {
-            if (this.config?.overlay_mode === "disabled") {
-                return;
-            }
-
             const screenId = this.config?.overlay_screen_id ?? -1; // -1 for primary screen
 
             await this.tauri.createOverlay({

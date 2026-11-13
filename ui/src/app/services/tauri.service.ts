@@ -198,7 +198,7 @@ export interface BackendLifecycleMessage extends BaseMessage {
 export interface OverlayCreateOptions {
     alwaysOnTop: boolean;
     screenId?: number;
-    mode?: "disabled" | "desktop" | "standalone" | "vr" | "both";
+    mode?: "disabled" | "desktop" | "vr";
     standaloneTransparent?: boolean;
     standaloneBackgroundColor?: string;
     vrSizeMeters?: number;
@@ -432,6 +432,11 @@ export class TauriService {
     public async destroyOverlay(): Promise<void> {
         await window.electronAPI?.invoke("destroy_floating_overlay", {});
     }
+    public async getObsSourceState(): Promise<any> { return window.electronAPI?.invoke('get_obs_source_state'); }
+    public async configureObsSource(enabled: boolean, port: number): Promise<any> {
+        return window.electronAPI?.invoke('configure_obs_source', {enabled,port});
+    }
+    public async copyObsSourceUrl(): Promise<boolean> {return window.electronAPI?.invoke('copy_obs_source_url') ?? false;}
 
     public async getAvailableScreens(): Promise<ScreenInfo[]> {
         if (!window.electronAPI) {

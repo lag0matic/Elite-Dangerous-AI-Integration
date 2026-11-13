@@ -4,11 +4,12 @@ import { MatCardModule } from "@angular/material/card";
 import { ChatMessage, ChatService } from "../../services/chat.service";
 import { Character, CharacterService } from "../../services/character.service";
 import { Subscription } from "rxjs";
+import { SpokenTextPipe } from '../../overlay-view/spoken-text.pipe';
 
 @Component({
   selector: "app-chat-container",
   standalone: true,
-  imports: [CommonModule, MatCardModule],
+  imports: [CommonModule, MatCardModule, SpokenTextPipe],
   templateUrl: "./chat-container.component.html",
   styleUrl: "./chat-container.component.css",
   host: {

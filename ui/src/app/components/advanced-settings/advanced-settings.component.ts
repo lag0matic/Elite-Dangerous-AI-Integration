@@ -21,6 +21,7 @@ import { MatInputModule } from "@angular/material/input";
 import { MatButtonModule } from "@angular/material/button";
 import { Character, CharacterService } from "../../services/character.service";
 import { ConfigBackupService } from "../../services/config-backup.service";
+import { ObsSourceSettingsComponent } from '../obs-source-settings/obs-source-settings.component';
 import { MatIcon } from "@angular/material/icon";
 import {
     OverlayRuntimeInfo,
@@ -79,6 +80,7 @@ type AdvancedSettingsPanel = "commander" | "llm" | "agent-llm" | "stt" | "tts" |
         MatError,
         MatOptgroup,
         MatIcon,
+        ObsSourceSettingsComponent,
         MatAccordion,
         MatExpansionModule,
         MatExpansionPanel,
@@ -476,7 +478,7 @@ export class AdvancedSettingsComponent implements OnDestroy {
 
     get overlayRuntimeInstalled(): boolean {
         const info = this.overlayRuntimeInfo;
-        return this.config?.overlay_mode === "vr" || this.config?.overlay_mode === "both" || Boolean(info?.packageInstalled && (
+        return this.config?.overlay_mode === "vr" || Boolean(info?.packageInstalled && (
             info.openxrAvailable ||
             Boolean(info.openxrRuntimeManifestPath) ||
             info.openvrRuntimeInstalled ||
@@ -490,7 +492,7 @@ export class AdvancedSettingsComponent implements OnDestroy {
     }
 
     get vrOverlaySelected(): boolean {
-        return this.config?.overlay_mode === "vr" || this.config?.overlay_mode === "both";
+        return this.config?.overlay_mode === "vr";
     }
 
     get desktopOverlayBackendLabel(): string {
@@ -873,9 +875,10 @@ export class AdvancedSettingsComponent implements OnDestroy {
     }
 
     async onConfigChange(partialConfig: Partial<Config>) {
+        if (partialConfig.overlay_mode === "desktop") partialConfig.overlay_screen_id = -2;
         if (partialConfig.overlay_mode !== undefined) {
             clearTimeout(this.vrCompatibilityRefreshTimer);
-            if (partialConfig.overlay_mode === "vr" || partialConfig.overlay_mode === "both") {
+            if (partialConfig.overlay_mode === "vr") {
                 void this.refreshOverlayRuntimeInfo();
             }
         }

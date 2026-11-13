@@ -16,6 +16,8 @@ import { getOverlayPlacement, normalizeVrPlacementOptions } from './vr-placement
 import { updateExistingVrOverlay } from './vr-overlay-updates.js';
 import { createSeatController } from './vr-seat-controller.js';
 import { createEdvrLogAdapter } from './vr-edvr-log-adapter.js';
+import { createObsSource } from './obs-source.js';
+import { migrateOverlayConfig } from './overlay-modes.js';
 import { createGameProbe } from './vr-game-probe.js';
 import { assessRestart, buildVrDiagnostics, createFrameHealthTracker, createSceneTracker } from './vr-diagnostics.js';
 import {
@@ -44,6 +46,7 @@ const redactedConfigLineMarkers = [
 ];
 let loggerShuttingDown = false;
 let remoteInterface = null;
+let obsSource = null;
 let activeVrOverlay = null;
 let openvrHostProcess = null;
 let openvrHostRestartTimer = null;
@@ -198,11 +201,7 @@ function clamp(value, min, max) {
 
 function normalizeOverlayOptions(opts = {}) {
   const desktopPlacement = normalizeDesktopOverlayScreen(opts.screenId);
-  const mode = opts.mode === 'screen'
-    ? 'desktop'
-    : ['disabled', 'desktop', 'standalone', 'vr', 'both'].includes(opts.mode)
-      ? opts.mode
-      : 'desktop';
+  const mode = migrateOverlayConfig({overlay_mode:opts.mode}).overlay_mode;
   const vrCurvature = Number.isFinite(opts.vrCurvature)
     ? clamp(opts.vrCurvature, 0, 0.5)
     : 0;
@@ -594,6 +593,9 @@ class BackendService {
     }
   }
   #notifyListeners(channel, payload) {
+    if (channel === 'stdout' && obsSource) {
+      try { obsSource.accept(JSON.parse(payload)); } catch { /* Non-JSON backend output is not overlay data. */ }
+    }
     this.#recentMessages.push({ channel, payload });
     if (this.#recentMessages.length > 200) {
       this.#recentMessages.shift();
@@ -646,6 +648,7 @@ class BackendService {
     this.#remoteClients.delete(client);
   }
   startProcess(mainWindow) {
+    obsSource?.reset();
     this.attachWindow(mainWindow);
     if (this.#hasActiveProcess()) {
       logger.warn('Process is already running, stopping it first');
@@ -996,36 +999,6 @@ async function createVrOverlayWindow(opts) {
   };
 }
 
-async function createStandaloneOverlayWindow(opts) {
-  const overlayWindow = new BrowserWindow({
-    width: 1280,
-    height: 720,
-    title: overlayWindowTitle,
-    transparent: opts.standaloneTransparent,
-    backgroundColor: opts.standaloneTransparent ? '#00000000' : opts.standaloneBackgroundColor,
-    webPreferences: {
-      preload: overlayPreloadPath,
-    },
-  });
-
-  try {
-    await overlayWindow.loadURL(config.overlay);
-  } catch (error) {
-    if (!overlayWindow.isDestroyed()) {
-      overlayWindow.destroy();
-    }
-    throw error;
-  }
-
-  return {
-    kind: 'standalone',
-    window: overlayWindow,
-    windows: [overlayWindow],
-    controller: null,
-    runtimeInfo: null,
-    cleanedUp: false,
-  };
-}
 
 async function createManagedOverlay(opts) {
   const normalized = normalizeOverlayOptions(opts);
@@ -1041,36 +1014,6 @@ async function createManagedOverlay(opts) {
   }
   if (normalized.mode === 'vr') {
     return await createVrOverlayWindow(normalized);
-  }
-  if (normalized.mode === 'standalone') {
-    return await createStandaloneOverlayWindow(normalized);
-  }
-  if (normalized.mode === 'both') {
-    const vrOverlay = await createVrOverlayWindow(normalized);
-    let desktopOverlay;
-    try {
-      desktopOverlay = await createFloatingOverlayWindow(normalized);
-    } catch (error) {
-      try {
-        vrOverlay.controller.destroy();
-        if (activeVrOverlay === vrOverlay.controller) activeVrOverlay = null;
-      } catch (cleanupError) {
-        logger.warn('Failed to clean up VR overlay after desktop overlay initialization failed:', cleanupError);
-      }
-      if (!vrOverlay.window.isDestroyed()) {
-        vrOverlay.window.destroy();
-      }
-      throw error;
-    }
-    return {
-      kind: 'both',
-      window: desktopOverlay.window,
-      windows: [desktopOverlay.window, vrOverlay.window],
-      controller: vrOverlay.controller,
-      nativeControllers: [desktopOverlay.nativeController],
-      runtimeInfo: vrOverlay.runtimeInfo,
-      cleanedUp: false,
-    };
   }
   const desktopOverlay = await createFloatingOverlayWindow(normalized);
   return {
@@ -1380,6 +1323,11 @@ function getRemoteInterfaceState() {
 }
 
 app.whenReady().then(async ()=>{
+  obsSource = createObsSource({uiDirectory:getRemoteUiDirectory(),
+    tokenPath:path.join(app.getPath('userData'),'obs-source-token'),
+    onStatus: ({enabled,running,error,port}) => logger.info({enabled,running,error,port},'OBS source status')});
+  await obsSource.start();
+  app.on('before-quit', () => {void obsSource.close();});
   startOpenVRHostCompanion();
 
   protocol.handle('app', (request) => {
@@ -1469,6 +1417,9 @@ app.whenReady().then(async ()=>{
   ipcMain.handle('stop_remote_interface', async () => stopRemoteInterface());
   ipcMain.handle('get_remote_interface_state', async () => getRemoteInterfaceState());
   ipcMain.handle('get_remote_interface_bind_addresses', async () => getRemoteInterfaceBindAddresses());
+  ipcMain.handle('get_obs_source_state', () => obsSource.state());
+  ipcMain.handle('configure_obs_source', (_event, options) => obsSource.configure(options));
+  ipcMain.handle('copy_obs_source_url', () => {const url=obsSource.state().url;if(url)clipboard.writeText(url);return Boolean(url);});
   ipcMain.handle('get_overlay_runtime_info', async () => getOverlayRuntimeInfo());
   ipcMain.handle('copy_vr_diagnostics', async () => {
     const info = await getOverlayRuntimeInfo();

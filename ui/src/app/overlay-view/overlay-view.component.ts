@@ -10,11 +10,12 @@ import {CharacterService} from "../services/character.service";
 import {Config, ConfigService} from "../services/config.service";
 import {GenUiRenderComponent} from "../components/gen-ui-render/gen-ui-render.component";
 import { EventService } from "../services/event.service";
+import { SpokenTextPipe } from './spoken-text.pipe';
 
 @Component({
   selector: "app-overlay-view",
   standalone: true,
-  imports: [CommonModule, GenUiRenderComponent],
+  imports: [CommonModule, GenUiRenderComponent, SpokenTextPipe],
   templateUrl: "./overlay-view.component.html",
   styleUrl: "./overlay-view.component.css",
 })

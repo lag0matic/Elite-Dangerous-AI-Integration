@@ -125,7 +125,7 @@ export interface Config {
     overlay_show_avatar: boolean;
     overlay_show_hud: boolean;
     overlay_show_chat: boolean;
-    overlay_mode: "disabled" | "desktop" | "standalone" | "vr" | "both";
+    overlay_mode: "disabled" | "desktop" | "vr";
     overlay_position: "left" | "right" | "left-medium" | "left-small" | "right-medium" | "right-small";
     overlay_screen_id: number;
     overlay_standalone_transparent: boolean;
@@ -198,9 +198,9 @@ export class ConfigService {
             ),
         ).subscribe((message: ConfigMessage | RunningConfigMessage | SystemInfoMessage | PluginSettingsMessage | PluginModelProvidersMessage | KeybindsMessages) => {
             if (message.type === "config") {
-                this.configSubject.next(message.config);
+                this.configSubject.next(this.normalizeOverlayMode(message.config));
             } else if (message.type === "running_config") {
-                this.configSubject.next(message.config);
+                this.configSubject.next(this.normalizeOverlayMode(message.config));
             } else if (message.type === "system") {
                 // Do not mutate SystemInfo with screen data
                 this.systemSubject.next(message.system);
@@ -226,6 +226,15 @@ export class ConfigService {
                 this.keybinds_subject.next(message);
             }
         });
+    }
+
+    private normalizeOverlayMode(config: Config): Config {
+        const oldMode = config.overlay_mode as string;
+        const mode = oldMode === 'both' ? 'vr' : ['standalone','screen'].includes(oldMode) ? 'desktop' : config.overlay_mode;
+        if (mode !== oldMode && window.electronAPI) {
+            void this.tauriService.send_command({type:'change_config',timestamp:new Date().toISOString(),config:{overlay_mode:mode}});
+        }
+        return {...config,overlay_mode:mode};
     }
 
     private async loadScreens(): Promise<void> {

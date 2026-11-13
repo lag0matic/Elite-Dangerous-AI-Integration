@@ -2,7 +2,7 @@
   <div class="chat-entry" [ngClass]="getEventClass(msg.role, msg.message)">
     <span class="timestamp">{{ msg.timestamp | date:'HH:mm:ss' }}</span>
     <span class="prefix" [style.color]="msg.display_color || getLogColor(msg.role)">{{ getDisplayName(msg) }}</span>
-    <span class="message">{{ formatMessage(msg) }}</span>
+    <span class="message">{{ formatMessage(msg) | spokenText:msg.role }}</span>
     @if (msg.processingText) {
       <span class="processing-text">{{ msg.processingText }}</span>
     }

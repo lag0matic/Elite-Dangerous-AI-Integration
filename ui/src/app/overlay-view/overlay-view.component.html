@@ -31,7 +31,7 @@
               <div class="chat-entry">
                 <span class="timestamp">{{ msg.timestamp | date:'HH:mm:ss' }}</span>
                 <span class="prefix" [style.color]="msg.display_color || getLogColor(msg.role)">{{ getDisplayName(msg) }}</span>
-                <span class="message">{{ msg.message }}</span>
+                <span class="message">{{ msg.message | spokenText:msg.role }}</span>
               </div>
             }
 

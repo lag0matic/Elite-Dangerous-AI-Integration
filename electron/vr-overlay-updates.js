@@ -2,7 +2,7 @@ import { getOverlayPlacement } from './vr-placement.js';
 
 export function updateExistingVrOverlay(overlay, previous, next) {
   if (!overlay?.controller || overlay.cleanedUp || !previous ||
-      !['vr', 'both'].includes(next.mode) || next.mode !== previous.mode) return false;
+      next.mode !== 'vr' || next.mode !== previous.mode) return false;
   const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
   for (const key of keys) {
     if (!key.startsWith('vr') && previous[key] !== next[key]) return false;
